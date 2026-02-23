@@ -41,7 +41,7 @@ export const ClientCard: React.FC<ClientCardProps> = ({ client, onClick, onDelet
           </div>
           <div>
             <h4 className="font-display font-bold text-base text-slate-900 flex items-center gap-2">
-              {client.shopName}
+              {client.shopName || <span className="italic text-slate-400">(Unnamed Shop)</span>}
               {client.history?.some(h => h.status === 'Failed' || h.paymentStatus === 'Pending') && (
                 <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" title="Requires Attention"></span>
               )}

@@ -1,0 +1,254 @@
+import time
+import sys
+import os
+import json
+import requests
+import subprocess
+import firebase_admin
+from firebase_admin import credentials, firestore
+from pad4pi import rpi_gpio
+from luma.core.interface.serial import i2c
+from luma.core.render import canvas
+from luma.oled.device import ssd1306
+from PIL import ImageFont
+
+# ==========================================
+# 1. CONFIGURATION & SETUP
+# ==========================================
+
+# --- Load Identity from config.json ---
+try:
+    with open('config.json', 'r') as f:
+        config = json.load(f)
+        SHOP_ID = config['shop_id']
+        PRINTER_ID = config['printer_id']
+        PRINTER_NAME = config.get('printer_name', 'Xerox_B215') # Default fallback
+        SHOP_NAME = config.get('shop_name', 'Unknown Shop')
+except Exception as e:
+    print(f"CRITICAL ERROR: Could not load config.json. {e}")
+    sys.exit(1)
+
+# --- Initialize Firebase ---
+# This looks for the key in the same folder
+cred_path = 'serviceAccountKey.json'
+if not os.path.exists(cred_path):
+    print(f"CRITICAL ERROR: {cred_path} not found.")
+    sys.exit(1)
+
+cred = credentials.Certificate(cred_path)
+firebase_admin.initialize_app(cred)
+db = firestore.client()
+
+# --- Hardware Setup (OLED & Keypad) ---
+# OLED
+serial = i2c(port=1, address=0x3C)
+device = ssd1306(serial)
+
+# Keypad (4x4 Matrix)
+KEYPAD_ROWS = [5, 6, 13, 19]
+KEYPAD_COLS = [26, 16, 20, 21]
+factory = rpi_gpio.KeypadFactory()
+keypad = factory.create_keypad(keypad=KEYPAD_ROWS, col_pins=KEYPAD_COLS)
+
+# Global Variables
+current_code = ""
+is_processing = False
+
+# ==========================================
+# 2. HELPER FUNCTIONS
+# ==========================================
+
+def display_message(line1, line2="", font_size=12):
+    """Draws text to the OLED screen"""
+    with canvas(device) as draw:
+        # You can load a custom font if you have a .ttf file, otherwise use default
+        draw.text((5, 10), line1, fill="white")
+        draw.text((5, 30), line2, fill="white")
+    print(f"[DISPLAY] {line1} | {line2}")
+
+def reset_screen():
+    """Resets the screen to waiting mode"""
+    global current_code
+    current_code = ""
+    display_message("Print-E Ready", "Enter Code: ____")
+
+def download_file(url, save_path):
+    """Downloads the PDF from Firebase Storage URL"""
+    try:
+        response = requests.get(url, stream=True)
+        if response.status_code == 200:
+            with open(save_path, 'wb') as f:
+                f.write(response.content)
+            return True
+        return False
+    except Exception as e:
+        print(f"Download Error: {e}")
+        return False
+
+# ==========================================
+# 3. CORE PRINT LOGIC
+# ==========================================
+
+def process_print_job(doc_ref, data):
+    global is_processing
+    is_processing = True
+    
+    code = doc_ref.id
+    file_url = data.get('fileUrl')
+    
+    display_message("Found Order!", "Downloading...")
+    
+    # 1. Download PDF
+    local_filename = f"/tmp/{code}.pdf"
+    if not download_file(file_url, local_filename):
+        display_message("Error", "Download Failed")
+        time.sleep(2)
+        is_processing = False
+        reset_screen()
+        return
+
+    # 2. Send to Printer
+    display_message("Printing...", "Please Wait")
+    try:
+        # CUPS Command: lp -d [PRINTER_NAME] [FILE_PATH]
+        # Adding options to fit page is usually safer
+        cmd = ["lp", "-d", PRINTER_NAME, "-o", "media=A4", "-o", "fit-to-page", local_filename]
+        subprocess.run(cmd, check=True)
+        print("Sent to printer successfully.")
+        
+        # 3. THE DUAL-WRITE DATABASE UPDATE (Batch Write)
+        # This updates the global order AND adds to the shop's history safely
+        batch = db.batch()
+        
+        # A. Update Global Order
+        batch.update(doc_ref, {
+            'status': 'completed',
+            'printedAt': firestore.SERVER_TIMESTAMP,
+            'shopId': SHOP_ID,
+            'shopName': SHOP_NAME,
+            'printerId': PRINTER_ID,
+            'printedStatus': 'Success'
+        })
+        
+        # B. Add to Client's History Subcollection
+        # We create a new doc inside clients/{SHOP_ID}/history/{ORDER_ID}
+        history_ref = db.collection('clients').document(SHOP_ID).collection('history').document(code)
+        
+        # Copy relevant data to history
+        batch.set(history_ref, {
+            'orderId': code,
+            'timestamp': firestore.SERVER_TIMESTAMP,
+            'pages': data.get('totalPages', 1),
+            'cost': data.get('amount', 0),
+            'type': 'Color' if data.get('isColor') else 'B/W',
+            'status': 'Completed',
+            'userPhoneNumber': data.get('mobileNumber', 'Unknown'),
+            'printerName': PRINTER_NAME,
+            'paymentStatus': 'Paid' # Assuming prepaid
+        })
+        
+        # Commit the batch
+        batch.commit()
+        
+        display_message("SUCCESS!", "Collect Paper")
+        time.sleep(3)
+        
+    except subprocess.CalledProcessError as e:
+        display_message("Printer Error", "Check Tray")
+        print(f"CUPS Error: {e}")
+        time.sleep(2)
+    except Exception as e:
+        display_message("System Error", "Update Failed")
+        print(f"Logic Error: {e}")
+        time.sleep(2)
+    finally:
+        # Cleanup
+        if os.path.exists(local_filename):
+            os.remove(local_filename)
+        is_processing = False
+        reset_screen()
+
+def verify_code():
+    """Checks the entered code against Firebase"""
+    display_message("Verifying...", current_code)
+    
+    try:
+        # Direct lookup - fast and cheap
+        doc_ref = db.collection('orders').document(current_code)
+        doc = doc_ref.get()
+        
+        if doc.exists:
+            data = doc.to_dict()
+            status = data.get('status')
+            
+            if status == 'pending':
+                process_print_job(doc_ref, data)
+            elif status == 'completed':
+                display_message("Used Code", "Already Printed")
+                time.sleep(2)
+                reset_screen()
+            else:
+                display_message("Error", f"Status: {status}")
+                time.sleep(2)
+                reset_screen()
+        else:
+            display_message("Invalid Code", "Try Again")
+            time.sleep(2)
+            reset_screen()
+            
+    except Exception as e:
+        display_message("Net Error", "Check WiFi")
+        print(f"Firebase Error: {e}")
+        time.sleep(2)
+        reset_screen()
+
+# ==========================================
+# 4. KEYPAD INPUT LOOP
+# ==========================================
+
+def key_pressed(key):
+    global current_code
+    
+    if is_processing:
+        return # Ignore input while printing
+        
+    print(f"Key Pressed: {key}")
+    
+    if key == '#':
+        # Confirm Code
+        if len(current_code) > 0:
+            verify_code()
+        else:
+            reset_screen()
+            
+    elif key == '*':
+        # Clear/Backspace
+        current_code = ""
+        reset_screen()
+        
+    else:
+        # Type Number
+        # Limit code length to avoid overflow
+        if len(current_code) < 6: 
+            current_code += str(key)
+            display_message("Enter Code:", current_code)
+
+# --- STARTUP ---
+if __name__ == "__main__":
+    try:
+        print("Starting Kiosk...")
+        display_message("Booting...", "Connecting...")
+        
+        # Setup Keypad Listener
+        keypad.registerKeyPressHandler(key_pressed)
+        
+        reset_screen()
+        
+        # Keep the script running
+        while True:
+            time.sleep(1)
+            
+    except KeyboardInterrupt:
+        display_message("Shutting Down", "Goodbye")
+        print("\nExiting...")
+        sys.exit(0)
