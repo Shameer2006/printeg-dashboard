@@ -1,0 +1,1961 @@
+import React, { useState, useMemo, useEffect } from 'react';
+import {
+  Search,
+  Plus,
+  Filter,
+  Download,
+  Printer,
+  Users,
+  AlertCircle,
+  Menu,
+  X,
+  CheckCircle2,
+  MessageSquare,
+  Clock,
+  ArrowRight,
+  LayoutGrid,
+  ArrowLeft,
+  Calendar,
+  Layers,
+  FileText,
+  Lock,
+  User as UserIcon,
+  Eye,
+  EyeOff,
+  Store,
+  MapPin,
+  Settings,
+  Trash2,
+  Receipt,
+  AlertTriangle,
+  Phone,
+  Mail,
+  Pencil,
+  QrCode,
+  ChevronDown
+} from 'lucide-react';
+import { QRCodeCanvas } from 'qrcode.react';
+import { Sidebar } from './components/Sidebar';
+import { StatCard } from './components/StatCard';
+import { ClientCard } from './components/ClientCard';
+import { Client, StatusType, PrintPrices } from './types';
+import { db } from './src/lib/firebase';
+import { collection, onSnapshot, query, addDoc, deleteDoc, updateDoc, doc } from 'firebase/firestore';
+
+// Define the number of items to display per page for pagination
+const ITEMS_PER_PAGE = 5;
+
+/**
+ * LOGIN PAGE COMPONENT
+ * Defined outside App to ensure it is stable and doesn't remount on App state changes.
+ */
+const LoginPage: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
+  const [userId, setUserId] = useState('');
+  const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [error, setError] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+
+  // Recovery State
+  const [isRecovering, setIsRecovering] = useState(false);
+  const [recoveryEmail, setRecoveryEmail] = useState('');
+  const [recoveryPhone, setRecoveryPhone] = useState('');
+  const [recoveryStatus, setRecoveryStatus] = useState<'idle' | 'success'>('idle');
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setIsLoading(true);
+
+    // Simulated Auth logic with requested credentials
+    // User ID: printeg.online
+    // Password: printeg
+    setTimeout(() => {
+      if (userId.trim() === 'printeg.online' && password === 'printeg') {
+        onLogin();
+      } else {
+        setError('Invalid credentials. Hint: printeg.online / printeg');
+        setIsLoading(false);
+      }
+    }, 600);
+  };
+
+  const handleRecovery = (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setIsLoading(true);
+
+    // Mock Recovery Logic
+    setTimeout(() => {
+      if (recoveryEmail && recoveryPhone) {
+        setRecoveryStatus('success');
+        setIsLoading(false);
+        // Reset after 3 seconds to login
+        setTimeout(() => {
+          setIsRecovering(false);
+          setRecoveryStatus('idle');
+          setRecoveryEmail('');
+          setRecoveryPhone('');
+        }, 3000);
+      } else {
+        setError('Please enter both Email and Phone Number.');
+        setIsLoading(false);
+      }
+    }, 800);
+  };
+
+  return (
+    <div className="min-h-screen flex items-center justify-center technical-grid p-6 relative z-10">
+      <div className="w-full max-w-md animate-in fade-in slide-in-from-bottom-4 duration-700">
+        <div className="flex flex-col items-center text-center mb-10">
+          <div className="w-16 h-16 bg-black flex items-center justify-center rounded-2xl shadow-2xl mb-6">
+            <span className="text-white font-display font-bold text-3xl">P</span>
+          </div>
+          <h1 className="font-display font-bold text-3xl text-slate-900 tracking-tight">PrintEG</h1>
+          <p className="text-slate-500 font-medium mt-2">Print. Easy. Go</p>
+        </div>
+
+        <div className="bg-white border border-slate-200 rounded-[2.5rem] p-10 shadow-2xl shadow-slate-200/50">
+          <h2 className="text-xl font-bold text-slate-900 mb-8">{isRecovering ? 'Account Recovery' : 'Admin Console Login'}</h2>
+
+          {/* SUCCESS MESSAGE */}
+          {recoveryStatus === 'success' ? (
+            <div className="text-center animate-in zoom-in duration-300">
+              <div className="w-16 h-16 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-4">
+                <CheckCircle2 size={32} />
+              </div>
+              <h3 className="font-bold text-slate-900 text-lg mb-2">Recovery Sent!</h3>
+              <p className="text-slate-500 text-sm">
+                Login credentials have been sent to <br />
+                <span className="font-bold text-slate-900">{recoveryEmail}</span> and <span className="font-bold text-slate-900">{recoveryPhone}</span>
+              </p>
+            </div>
+          ) : (
+            /* FORM CONTAINER */
+            <>
+              {!isRecovering ? (
+                /* LOGIN FORM */
+                <form onSubmit={handleSubmit} className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-300">
+                  <div>
+                    <label htmlFor="userId" className="block text-[11px] font-bold text-slate-400 uppercase tracking-widest mb-2">
+                      User ID
+                    </label>
+                    <div className="relative">
+                      <UserIcon className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={18} />
+                      <input
+                        id="userId"
+                        name="userId"
+                        type="text"
+                        placeholder="e.g. name.online"
+                        autoComplete="username"
+                        className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-black focus:bg-white outline-none transition-all text-sm font-medium text-slate-900"
+                        value={userId}
+                        onChange={(e) => setUserId(e.target.value)}
+                        required
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label htmlFor="password" className="block text-[11px] font-bold text-slate-400 uppercase tracking-widest mb-2">
+                      Password
+                    </label>
+                    <div className="relative">
+                      <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={18} />
+                      <input
+                        id="password"
+                        name="password"
+                        type={showPassword ? "text" : "password"}
+                        placeholder="Enter secret key"
+                        autoComplete="current-password"
+                        className="w-full pl-12 pr-12 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-black focus:bg-white outline-none transition-all text-sm font-medium text-slate-900"
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        required
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword(!showPassword)}
+                        className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-black transition-colors"
+                        aria-label={showPassword ? "Hide password" : "Show password"}
+                      >
+                        {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                      </button>
+                    </div>
+                    <div className="mt-2 text-right">
+                      <button type="button" onClick={() => { setIsRecovering(true); setError(''); }} className="text-xs font-bold text-slate-400 hover:text-black transition-colors">
+                        Forgot Password?
+                      </button>
+                    </div>
+                  </div>
+
+                  {error && (
+                    <div className="flex items-center gap-2 text-rose-600 text-xs font-bold bg-rose-50 p-4 rounded-2xl border border-rose-100 animate-in fade-in duration-300">
+                      <AlertCircle size={16} />
+                      {error}
+                    </div>
+                  )}
+
+                  <button
+                    type="submit"
+                    disabled={isLoading}
+                    className="w-full bg-black text-white py-4 rounded-2xl font-bold hover:bg-slate-800 transition-all shadow-xl active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 mt-4"
+                  >
+                    {isLoading ? (
+                      <div className="w-5 h-5 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+                    ) : (
+                      <>Enter Dashboard <ArrowRight size={18} /></>
+                    )}
+                  </button>
+                </form>
+              ) : (
+                /* RECOVERY FORM */
+                <form onSubmit={handleRecovery} className="space-y-6 animate-in fade-in slide-in-from-left-4 duration-300">
+                  <div className="p-4 bg-blue-50 text-blue-800 text-xs font-medium rounded-2xl mb-4 leading-relaxed">
+                    Verify your identity to reset access. We will send a secure link to your registered contact methods.
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-widest mb-2">
+                      Registered Email ID
+                    </label>
+                    <input
+                      type="email"
+                      className="w-full px-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-black focus:bg-white outline-none transition-all text-sm font-medium text-slate-900"
+                      placeholder="e.g. admin@printeg.online"
+                      value={recoveryEmail}
+                      onChange={(e) => setRecoveryEmail(e.target.value)}
+                      required
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-widest mb-2">
+                      Registered Phone Number
+                    </label>
+                    <input
+                      type="tel"
+                      className="w-full px-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-black focus:bg-white outline-none transition-all text-sm font-medium text-slate-900"
+                      placeholder="e.g. +91 98765 43210"
+                      value={recoveryPhone}
+                      onChange={(e) => setRecoveryPhone(e.target.value)}
+                      required
+                    />
+                  </div>
+
+                  {error && (
+                    <div className="flex items-center gap-2 text-rose-600 text-xs font-bold bg-rose-50 p-4 rounded-2xl border border-rose-100 animate-in fade-in duration-300">
+                      <AlertCircle size={16} />
+                      {error}
+                    </div>
+                  )}
+
+                  <div className="pt-2 space-y-3">
+                    <button
+                      type="submit"
+                      disabled={isLoading}
+                      className="w-full bg-black text-white py-4 rounded-2xl font-bold hover:bg-slate-800 transition-all shadow-xl active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                    >
+                      {isLoading ? (
+                        <div className="w-5 h-5 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+                      ) : (
+                        'Verify Identity'
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={isLoading}
+                      onClick={() => { setIsRecovering(false); setError(''); }}
+                      className="w-full text-slate-400 hover:text-black font-bold text-sm py-2 transition-colors"
+                    >
+                      Back to Login
+                    </button>
+                  </div>
+                </form>
+              )}
+            </>
+          )}
+
+          <p className="text-center text-slate-400 text-[11px] mt-8 font-medium italic">
+            Secure admin access restricted to authorized personnel.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+};
+/**
+ * MAIN APPLICATION COMPONENT
+ */
+const App: React.FC = () => {
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [activeView, setActiveView] = useState<'dashboard' | 'customers' | 'reports' | 'transactions'>('dashboard');
+  const [clients, setClients] = useState<Client[]>([]);
+  const [allOrders, setAllOrders] = useState<any[]>([]);
+  const [allPrinterDocs, setAllPrinterDocs] = useState<any[]>([]);
+  const [allReportDocs, setAllReportDocs] = useState<any[]>([]);
+  const [selectedClient, setSelectedClient] = useState<Client | null>(null);
+  const [showDetailsPanel, setShowDetailsPanel] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [statusFilter, setStatusFilter] = useState<'all' | StatusType>('all');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [showOnboardModal, setShowOnboardModal] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+  const [dbStatus, setDbStatus] = useState<'connecting' | 'connected' | 'error'>('connecting');
+  const [dashboardSearchQuery, setDashboardSearchQuery] = useState('');
+  const [transactionsSearchQuery, setTransactionsSearchQuery] = useState('');
+
+  // New Client Form State
+  const [newShopName, setNewShopName] = useState('');
+  const [newLocation, setNewLocation] = useState('');
+  const [phoneNumber, setPhoneNumber] = useState('');
+  const [phoneError, setPhoneError] = useState('');
+  const [isInstitution, setIsInstitution] = useState(false);
+  const [emailId, setEmailId] = useState('');
+
+  // Delete Client State
+  const [clientToDelete, setClientToDelete] = useState<string | null>(null);
+
+  // Add Printer Form State
+  const [showAddPrinterModal, setShowAddPrinterModal] = useState(false);
+  const [printerName, setPrinterName] = useState('');
+  const [printerConfig, setPrinterConfig] = useState('');
+  const [printerLocation, setPrinterLocation] = useState('');
+  const [printerRequirements, setPrinterRequirements] = useState('');
+  const [printerToDelete, setPrinterToDelete] = useState<string | null>(null);
+
+  // Printer Actions State
+  const [printerToEdit, setPrinterToEdit] = useState<any | null>(null);
+  const [printerToView, setPrinterToView] = useState<any | null>(null);
+  const [activeSettingsMenu, setActiveSettingsMenu] = useState<string | null>(null);
+
+  // Shop Settings State
+  const defaultPrices: PrintPrices = {
+    singleSide: { bw: 0, color: 0 },
+    doubleSide: { bw: 0, color: 0 },
+    twoInOne: { bw: 0, color: 0 }
+  };
+  const [showShopSettingsModal, setShowShopSettingsModal] = useState(false);
+  const [printingPrices, setPrintingPrices] = useState<PrintPrices>(defaultPrices);
+  const [showPricingDetails, setShowPricingDetails] = useState(false);
+  const [shopInfo, setShopInfo] = useState('');
+  const [customWebsiteName, setCustomWebsiteName] = useState('');
+
+
+  // Extract all reports for the global "Reports & Help" view
+  // Merges top-level `reports` collection with any nested client.reports[]
+  const allReports = useMemo(() => {
+    // From top-level `reports` collection
+    const fromCollection = allReportDocs.map(r => ({
+      id: String(r.id),
+      issue: String(r.issue || r.message || r.description || ''),
+      timestamp: String(r.timestamp || r.createdAt || ''),
+      status: String(r.status || 'pending'),
+      shopName: String(r.shopName || r.shop || clients.find(c => c.id === r.clientId)?.shopName || 'Unknown Shop'),
+      clientId: String(r.clientId || ''),
+      _source: 'collection' as const
+    }));
+    // From nested client.reports[]
+    const fromNested = clients.flatMap(client =>
+      (client.reports || []).map(r => ({
+        ...r,
+        id: String(r.id),
+        issue: String(r.issue || ''),
+        shopName: String(client.shopName),
+        clientId: String(client.id),
+        status: String(r.status || 'pending'),
+        _source: 'nested' as const
+      }))
+    );
+    // Merge: prefer collection docs, avoid duplicates by id
+    const collectionIds = new Set(fromCollection.map(r => r.id));
+    const merged = [...fromCollection, ...fromNested.filter(r => !collectionIds.has(r.id))];
+    return merged
+      .sort((a, b) => (a.status === 'pending' ? -1 : 1));
+  }, [clients, allReportDocs]);
+
+  // Extract all transactions for the global "Transactions" view
+  // Merges top-level `orders` collection with any nested client.history[]
+  const allTransactions = useMemo(() => {
+    // From top-level `orders` collection
+    const fromCollection = allOrders.map(order => ({
+      id: String(order.id),
+      timestamp: String(order.timestamp || order.createdAt || ''),
+      pages: Number(order.pages || order.pageCount || 0),
+      type: String(order.type || order.printType || 'B/W'),
+      status: String(order.status || 'Completed'),
+      userPhoneNumber: String(order.userPhoneNumber || order.phone || order.userId || ''),
+      printerName: String(order.printerName || order.printer || ''),
+      paymentStatus: String(order.paymentStatus || order.payment || 'Pending'),
+      cost: String(order.cost || order.amount || '₹0'),
+      errorDetails: order.errorDetails ? String(order.errorDetails) : undefined,
+      printedStatus: String(order.printedStatus || 'Not Printed'),
+      shopName: String(order.shopName || order.shop || clients.find(c => c.id === order.clientId)?.shopName || 'Unknown Shop'),
+      clientId: String(order.clientId || ''),
+      _source: 'collection' as const
+    }));
+    // From nested client.history[]
+    const fromNested = clients.flatMap(client =>
+      (client.history || []).map(job => ({
+        ...job,
+        id: String(job.id),
+        shopName: String(client.shopName),
+        clientId: String(client.id),
+        userPhoneNumber: String(job.userPhoneNumber || ''),
+        _source: 'nested' as const
+      }))
+    );
+    // Merge: prefer collection docs, avoid duplicates by id
+    const collectionIds = new Set(fromCollection.map(tx => tx.id));
+    const merged = [...fromCollection, ...fromNested.filter(tx => !collectionIds.has(tx.id))];
+    return merged
+      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+  }, [clients, allOrders]);
+
+  // Unified data for the selected client (merges collection and nested data)
+  const selectedClientTransactions = useMemo(() => {
+    if (!selectedClient) return [];
+    return allTransactions.filter(tx => tx.clientId === selectedClient.id);
+  }, [selectedClient, allTransactions]);
+
+  const selectedClientReports = useMemo(() => {
+    if (!selectedClient) return [];
+    return allReports.filter(r => r.clientId === selectedClient.id);
+  }, [selectedClient, allReports]);
+
+  const selectedClientPrinters = useMemo(() => {
+    if (!selectedClient) return [];
+    // Merge nested printers with top-level collection printers linked by clientId
+    const fromNested = selectedClient.printers || [];
+    const fromCollection = allPrinterDocs.filter(p => p.clientId === selectedClient.id);
+    const collectionIds = new Set(fromCollection.map(p => p.id));
+    return [...fromCollection, ...fromNested.filter(p => !collectionIds.has(p.id))];
+  }, [selectedClient, allPrinterDocs]);
+
+
+  // Dashboard Stats Calculations
+  const totalPrinters = useMemo(() => {
+    // Prefer top-level `printers` collection count; fallback to nested
+    if (allPrinterDocs.length > 0) return allPrinterDocs.length;
+    return clients.reduce((acc, client) => acc + (client.printers?.length || 0), 0);
+  }, [clients, allPrinterDocs]);
+
+  const totalRevenue = useMemo(() => {
+    return allTransactions.reduce((acc, tx) => {
+      const costStr = String(tx.cost || '0');
+      const amount = parseFloat(costStr.replace('₹', '').replace(',', ''));
+      return acc + (isNaN(amount) ? 0 : amount);
+    }, 0).toFixed(2);
+  }, [allTransactions]);
+
+  const totalPrints = useMemo(() => {
+    return allTransactions.reduce((acc, tx) => acc + tx.pages, 0);
+  }, [allTransactions]);
+
+  // Filtering Logic
+  const filteredClients = useMemo(() => {
+    return clients.filter(client => {
+      const matchesSearch = (client.shopName || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (client.location || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (client.deviceId || '').toLowerCase().includes(searchQuery.toLowerCase());
+      const matchesStatus = statusFilter === 'all' || client.status === statusFilter;
+      return matchesSearch && matchesStatus;
+    });
+  }, [clients, searchQuery, statusFilter]);
+
+  // Pagination Logic
+  const totalPages = Math.ceil(filteredClients.length / ITEMS_PER_PAGE);
+  const paginatedClients = useMemo(() => {
+    const start = (currentPage - 1) * ITEMS_PER_PAGE;
+    return filteredClients.slice(start, start + ITEMS_PER_PAGE);
+  }, [filteredClients, currentPage]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery, statusFilter]);
+
+  // Fetch Clients from Firestore
+  useEffect(() => {
+    const q = query(collection(db, "clients"));
+    const unsubscribe = onSnapshot(q, (querySnapshot) => {
+      const clientsData: Client[] = [];
+      querySnapshot.forEach((docSnap) => {
+        clientsData.push({ id: docSnap.id, ...docSnap.data() } as Client);
+      });
+      setClients(clientsData);
+      setDbStatus('connected');
+    }, (error) => {
+      console.error("Error fetching clients:", error);
+      setDbStatus('error');
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  // Fetch Orders from top-level `orders` collection
+  useEffect(() => {
+    const q = query(collection(db, "orders"));
+    const unsubscribe = onSnapshot(q, (querySnapshot) => {
+      const data: any[] = [];
+      querySnapshot.forEach((docSnap) => {
+        data.push({ id: docSnap.id, ...docSnap.data() });
+      });
+      setAllOrders(data);
+    }, (error) => {
+      console.error("Error fetching orders:", error);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // Fetch Printers from top-level `printers` collection
+  useEffect(() => {
+    const q = query(collection(db, "printers"));
+    const unsubscribe = onSnapshot(q, (querySnapshot) => {
+      const data: any[] = [];
+      querySnapshot.forEach((docSnap) => {
+        data.push({ id: docSnap.id, ...docSnap.data() });
+      });
+      setAllPrinterDocs(data);
+    }, (error) => {
+      console.error("Error fetching printers:", error);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // Fetch Reports from top-level `reports` collection
+  useEffect(() => {
+    const q = query(collection(db, "reports"));
+    const unsubscribe = onSnapshot(q, (querySnapshot) => {
+      const data: any[] = [];
+      querySnapshot.forEach((docSnap) => {
+        data.push({ id: docSnap.id, ...docSnap.data() });
+      });
+      setAllReportDocs(data);
+    }, (error) => {
+      console.error("Error fetching reports:", error);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // Keep selectedClient in sync with live Firestore data
+  useEffect(() => {
+    if (selectedClient) {
+      const updated = clients.find(c => c.id === selectedClient.id);
+      if (updated) setSelectedClient(updated);
+    }
+  }, [clients]);
+
+  // Global Stats
+  const activeCount = clients.filter(c => c.status === 'active').length;
+  const pendingReportsCount = allReports.filter(r => r.status === 'pending').length;
+
+  const handleOnboard = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPhoneError('');
+    if (!newShopName || !newLocation) return;
+
+    // Validate Phone Number (Exactly 10 Digits)
+    if (!/^\d{10}$/.test(phoneNumber)) {
+      setPhoneError('Please enter a valid 10-digit phone number');
+      return;
+    }
+
+    const newClient = {
+      shopName: newShopName,
+      location: newLocation,
+      deviceId: `40${Math.floor(Math.random() * 900) + 100}-${Math.random().toString(36).substr(2, 8)}`,
+      planType: 'Monthly',
+      status: 'active',
+      lastActive: 'Just now',
+      iconType: 'storefront',
+      history: [],
+      reports: [],
+      printers: [],
+      phoneNumber: phoneNumber,
+      ...(isInstitution && emailId ? { email: emailId } : {})
+    };
+
+    try {
+      await addDoc(collection(db, 'clients'), newClient);
+    } catch (err) {
+      console.error('Error adding client:', err);
+    }
+
+    setShowOnboardModal(false);
+    // Reset form
+    setNewShopName('');
+    setNewLocation('');
+    setPhoneNumber('');
+    setPhoneError('');
+    setIsInstitution(false);
+    setEmailId('');
+  };
+
+  const handleDeleteClient = (clientId: string) => {
+    setClientToDelete(clientId);
+  };
+
+  const confirmDeleteClient = async () => {
+    if (clientToDelete) {
+      try {
+        await deleteDoc(doc(db, 'clients', clientToDelete));
+        if (selectedClient?.id === clientToDelete) {
+          setSelectedClient(null);
+          setShowDetailsPanel(false);
+        }
+      } catch (err) {
+        console.error('Error deleting client:', err);
+      }
+      setClientToDelete(null);
+    }
+  };
+
+  const handleResolveReport = async (clientId: string, reportId: string) => {
+    // Try resolving in the top-level `reports` collection first
+    const reportInCollection = allReportDocs.find(r => r.id === reportId);
+    if (reportInCollection) {
+      try {
+        await updateDoc(doc(db, 'reports', reportId), { status: 'resolved' });
+      } catch (err) {
+        console.error('Error resolving report in collection:', err);
+      }
+    }
+    // Also update nested array inside client doc (for backwards compatibility)
+    const client = clients.find(c => c.id === clientId);
+    if (client && (client.reports || []).some(r => r.id === reportId)) {
+      const updatedReports = (client.reports || []).map(r =>
+        r.id === reportId ? { ...r, status: 'resolved' } : r
+      );
+      try {
+        await updateDoc(doc(db, 'clients', clientId), { reports: updatedReports });
+      } catch (err) {
+        console.error('Error resolving report in client doc:', err);
+      }
+    }
+  };
+
+  const handleSignOut = () => {
+    setIsAuthenticated(false);
+    setSelectedClient(null);
+    setActiveView('dashboard');
+  };
+
+  const handleExport = () => {
+    setIsExporting(true);
+    setTimeout(() => {
+      setIsExporting(false);
+      alert('Data exported successfully as CSV');
+    }, 1500);
+  };
+
+  const toggleFilter = () => {
+    if (statusFilter === 'all') setStatusFilter('active');
+    else if (statusFilter === 'active') setStatusFilter('expired');
+    else setStatusFilter('all');
+  };
+
+  const handleSelectClient = (client: Client) => {
+    setSelectedClient(client);
+    setShowDetailsPanel(true);
+  };
+
+  const handleOpenShopSettings = () => {
+    setPrintingPrices(selectedClient?.printingPrices || defaultPrices);
+    setShowPricingDetails(false);
+    setShopInfo(selectedClient?.shopInfo || '');
+    setCustomWebsiteName(selectedClient?.customWebsiteName || selectedClient?.shopName || '');
+    setShowShopSettingsModal(true);
+  };
+
+  const handleSaveShopSettings = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedClient) return;
+
+    try {
+      const payload: Partial<Client> = {
+        printingPrices: printingPrices,
+        shopInfo: shopInfo,
+        customWebsiteName: customWebsiteName
+      };
+
+      await updateDoc(doc(db, 'clients', selectedClient.id), payload);
+      setShowShopSettingsModal(false);
+    } catch (err) {
+      console.error('Error saving shop settings:', err);
+    }
+  };
+
+  const handleAddPrinter = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedClient || !printerConfig) return;
+
+    let updatedPrinters;
+
+    if (printerToEdit) {
+      // Edit Mode
+      const updatedPrinter = {
+        ...printerToEdit,
+        name: printerName,
+        configuration: printerConfig,
+        location: printerLocation,
+        requirements: printerRequirements
+      };
+      updatedPrinters = (selectedClient.printers || []).map(p =>
+        p.id === printerToEdit.id ? updatedPrinter : p
+      );
+      // Also update in top-level `printers` collection if it exists there
+      const printerDocInCollection = allPrinterDocs.find(p => p.id === printerToEdit.id);
+      if (printerDocInCollection) {
+        try {
+          await updateDoc(doc(db, 'printers', printerToEdit.id), {
+            name: printerName,
+            configuration: printerConfig,
+            location: printerLocation,
+            requirements: printerRequirements
+          });
+        } catch (err) {
+          console.error('Error updating printer in collection:', err);
+        }
+      }
+      setPrinterToEdit(null);
+    } else {
+      // Add Mode — write to top-level `printers` collection first
+      const newPrinterData: any = {
+        name: printerName || `Printer ${Math.floor(Math.random() * 100)}`,
+        configuration: printerConfig,
+        location: printerLocation || selectedClient.location,
+        requirements: printerRequirements,
+        status: 'active',
+        clientId: selectedClient.id,
+        shopName: selectedClient.shopName,
+        createdAt: new Date().toISOString()
+      };
+      let newPrinterId = Math.random().toString(36).substr(2, 9);
+      try {
+        const docRef = await addDoc(collection(db, 'printers'), newPrinterData);
+        newPrinterId = docRef.id;
+      } catch (err) {
+        console.error('Error adding printer to collection:', err);
+      }
+      const newPrinter = { id: newPrinterId, ...newPrinterData };
+      updatedPrinters = [...(selectedClient.printers || []), newPrinter];
+    }
+
+    try {
+      // Also keep the nested array on the client doc in sync
+      await updateDoc(doc(db, 'clients', selectedClient.id), { printers: updatedPrinters });
+    } catch (err) {
+      console.error('Error saving printer to client doc:', err);
+    }
+
+    setShowAddPrinterModal(false);
+    // Reset form
+    setPrinterName('');
+    setPrinterConfig('');
+    setPrinterLocation('');
+    setPrinterRequirements('');
+  };
+
+  const handleEditPrinter = (printer: any) => {
+    setPrinterToEdit(printer);
+    setPrinterName(printer.name);
+    setPrinterConfig(printer.configuration);
+    setPrinterLocation(printer.location);
+    setPrinterRequirements(printer.requirements || '');
+    setShowAddPrinterModal(true);
+    setActiveSettingsMenu(null);
+  };
+
+  const handleViewPrinter = (printer: any) => {
+    setPrinterToView(printer);
+    setActiveSettingsMenu(null);
+  };
+
+  const handleDeletePrinter = (printerId: string) => {
+    setPrinterToDelete(printerId);
+  };
+
+  const confirmDeletePrinter = async () => {
+    if (!selectedClient || !printerToDelete) return;
+    const updatedPrinters = (selectedClient.printers || []).filter(p => p.id !== printerToDelete);
+    try {
+      await updateDoc(doc(db, 'clients', selectedClient.id), { printers: updatedPrinters });
+    } catch (err) {
+      console.error('Error deleting printer:', err);
+    }
+    setPrinterToDelete(null);
+  };
+
+  const handleUpdateTransactionStatus = async (clientId: string, jobId: string, newStatus: 'Paid' | 'Refunded') => {
+    const client = clients.find(c => c.id === clientId);
+    if (!client) return;
+    const updatedHistory = (client.history || []).map(job =>
+      job.id === jobId ? { ...job, paymentStatus: newStatus } : job
+    );
+    try {
+      await updateDoc(doc(db, 'clients', clientId), { history: updatedHistory });
+    } catch (err) {
+      console.error('Error updating transaction status:', err);
+    }
+  };
+
+
+
+  if (!isAuthenticated) {
+    return <LoginPage onLogin={() => setIsAuthenticated(true)} />;
+  }
+
+  return (
+    <div className="flex min-h-screen technical-grid">
+      {isExporting && (
+        <div className="fixed top-6 right-6 z-[100] bg-black text-white px-6 py-3 rounded-2xl shadow-2xl flex items-center gap-3 animate-bounce">
+          <Download size={18} />
+          <span className="text-sm font-bold">Preparing CSV Export...</span>
+        </div>
+      )}
+
+      {/* Shop Settings Modal */}
+      {showShopSettingsModal && selectedClient && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowShopSettingsModal(false)} />
+          <div className="relative bg-white w-full max-w-2xl rounded-3xl p-8 shadow-2xl animate-in zoom-in-95 duration-200 overflow-y-auto max-h-[90vh]">
+            <button onClick={() => setShowShopSettingsModal(false)} className="absolute top-6 right-6 text-slate-400 hover:text-black">
+              <X size={24} />
+            </button>
+            <h3 className="text-2xl font-display font-bold mb-2">Shop Settings</h3>
+            <p className="text-slate-500 mb-6">Configure details and unique QR for <span className="font-bold text-slate-900">{selectedClient.shopName}</span></p>
+
+            <div className="flex flex-col md:flex-row gap-8">
+              <form onSubmit={handleSaveShopSettings} className="space-y-4 flex-1">
+                <div>
+                  <button
+                    type="button"
+                    onClick={() => setShowPricingDetails(!showPricingDetails)}
+                    className="w-full flex justify-between items-center bg-slate-50 border border-slate-200 px-4 py-3 rounded-xl font-bold text-slate-700 hover:bg-slate-100 transition-colors"
+                  >
+                    Configure Xerox Prices
+                    <ChevronDown size={18} className={`transform transition-transform ${showPricingDetails ? 'rotate-180' : ''}`} />
+                  </button>
+
+                  {showPricingDetails && (
+                    <div className="mt-3 p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-4 animate-in fade-in zoom-in-95 duration-200">
+                      {/* Single Side */}
+                      <div>
+                        <label className="block text-[11px] font-bold text-slate-400 uppercase mb-2">Single Side</label>
+                        <div className="flex gap-3">
+                          <div className="flex-1">
+                            <span className="text-[10px] text-slate-500 mb-1 block">B&W (₹)</span>
+                            <input type="number" min="0" step="0.5" className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg outline-none text-sm focus:ring-2 focus:ring-black" value={printingPrices.singleSide.bw} onChange={(e) => setPrintingPrices({ ...printingPrices, singleSide: { ...printingPrices.singleSide, bw: parseFloat(e.target.value) || 0 } })} />
+                          </div>
+                          <div className="flex-1">
+                            <span className="text-[10px] text-slate-500 mb-1 block">Color (₹)</span>
+                            <input type="number" min="0" step="0.5" className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg outline-none text-sm focus:ring-2 focus:ring-black" value={printingPrices.singleSide.color} onChange={(e) => setPrintingPrices({ ...printingPrices, singleSide: { ...printingPrices.singleSide, color: parseFloat(e.target.value) || 0 } })} />
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Double Side */}
+                      <div>
+                        <label className="block text-[11px] font-bold text-slate-400 uppercase mb-2">Double Side</label>
+                        <div className="flex gap-3">
+                          <div className="flex-1">
+                            <span className="text-[10px] text-slate-500 mb-1 block">B&W (₹)</span>
+                            <input type="number" min="0" step="0.5" className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg outline-none text-sm focus:ring-2 focus:ring-black" value={printingPrices.doubleSide.bw} onChange={(e) => setPrintingPrices({ ...printingPrices, doubleSide: { ...printingPrices.doubleSide, bw: parseFloat(e.target.value) || 0 } })} />
+                          </div>
+                          <div className="flex-1">
+                            <span className="text-[10px] text-slate-500 mb-1 block">Color (₹)</span>
+                            <input type="number" min="0" step="0.5" className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg outline-none text-sm focus:ring-2 focus:ring-black" value={printingPrices.doubleSide.color} onChange={(e) => setPrintingPrices({ ...printingPrices, doubleSide: { ...printingPrices.doubleSide, color: parseFloat(e.target.value) || 0 } })} />
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Two in One */}
+                      <div>
+                        <label className="block text-[11px] font-bold text-slate-400 uppercase mb-2">Two In One</label>
+                        <div className="flex gap-3">
+                          <div className="flex-1">
+                            <span className="text-[10px] text-slate-500 mb-1 block">B&W (₹)</span>
+                            <input type="number" min="0" step="0.5" className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg outline-none text-sm focus:ring-2 focus:ring-black" value={printingPrices.twoInOne.bw} onChange={(e) => setPrintingPrices({ ...printingPrices, twoInOne: { ...printingPrices.twoInOne, bw: parseFloat(e.target.value) || 0 } })} />
+                          </div>
+                          <div className="flex-1">
+                            <span className="text-[10px] text-slate-500 mb-1 block">Color (₹)</span>
+                            <input type="number" min="0" step="0.5" className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg outline-none text-sm focus:ring-2 focus:ring-black" value={printingPrices.twoInOne.color} onChange={(e) => setPrintingPrices({ ...printingPrices, twoInOne: { ...printingPrices.twoInOne, color: parseFloat(e.target.value) || 0 } })} />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-400 uppercase mb-2">Custom Website Name</label>
+                  <input
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all"
+                    placeholder="e.g. Printeg - Metro Hub"
+                    value={customWebsiteName}
+                    onChange={(e) => setCustomWebsiteName(e.target.value)}
+                  />
+                  <p className="text-[10px] text-slate-400 mt-1">This will display as the shop's name on the customer portal.</p>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-400 uppercase mb-2">Shop Information</label>
+                  <textarea
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all min-h-[100px] resize-none"
+                    placeholder="e.g. Hours of operation, exact landmarks..."
+                    value={shopInfo}
+                    onChange={(e) => setShopInfo(e.target.value)}
+                    rows={4}
+                  />
+                </div>
+
+                <div className="flex gap-3 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowShopSettingsModal(false)}
+                    className="flex-1 py-3 font-bold text-slate-500 hover:bg-slate-50 rounded-xl transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="flex-1 bg-black text-white py-3 rounded-xl font-bold hover:bg-slate-800 transition-all shadow-lg shadow-black/20"
+                  >
+                    Save Changes
+                  </button>
+                </div>
+              </form>
+
+              <div className="w-full md:w-64 flex flex-col items-center justify-center p-6 bg-slate-50 rounded-2xl border border-slate-200">
+                <div className="w-full aspect-square bg-white border border-slate-200 rounded-2xl flex items-center justify-center p-4 shadow-sm mb-4">
+                  <QRCodeCanvas
+                    value={`https://printeg.online/shop/${selectedClient.id}?name=${encodeURIComponent(customWebsiteName || selectedClient.shopName)}`}
+                    size={160}
+                    level="H"
+                    includeMargin={false}
+                  />
+                </div>
+                <div className="text-center">
+                  <h4 className="font-bold text-sm text-slate-900 mb-1 flex items-center justify-center gap-1"><QrCode size={14} /> Scan to Connect</h4>
+                  <p className="text-[10px] text-slate-500">Customers can scan this to access the shop portal directly.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Add Printer Modal */}
+      {showAddPrinterModal && selectedClient && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowAddPrinterModal(false)} />
+          <div className="relative bg-white w-full max-w-lg rounded-3xl p-8 shadow-2xl animate-in zoom-in-95 duration-200 overflow-y-auto max-h-[90vh]">
+            <button onClick={() => setShowAddPrinterModal(false)} className="absolute top-6 right-6 text-slate-400 hover:text-black">
+              <X size={24} />
+            </button>
+            <h3 className="text-2xl font-display font-bold mb-2">Add New Printer</h3>
+            <p className="text-slate-500 mb-6">Register a new machine at <span className="font-bold text-slate-900">{selectedClient.shopName}</span></p>
+
+            <form onSubmit={handleAddPrinter} className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-400 uppercase mb-2">Printer Name</label>
+                <input
+                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all"
+                  placeholder="e.g. Main Hall Xerox"
+                  value={printerName}
+                  onChange={(e) => setPrinterName(e.target.value)}
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-400 uppercase mb-2">Configuration <span className="text-rose-500">*</span></label>
+                <input
+                  required
+                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all"
+                  placeholder="e.g. Canon iR 2520, 2 Trays"
+                  value={printerConfig}
+                  onChange={(e) => setPrinterConfig(e.target.value)}
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-400 uppercase mb-2">Location</label>
+                <input
+                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all"
+                  placeholder="e.g. Floor 1, Near Reception"
+                  value={printerLocation}
+                  onChange={(e) => setPrinterLocation(e.target.value)}
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-400 uppercase mb-2">Additional Requirements</label>
+                <textarea
+                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all min-h-[100px] resize-none"
+                  placeholder="e.g. Needs A3 paper tray, specific network settings..."
+                  value={printerRequirements}
+                  onChange={(e) => setPrinterRequirements(e.target.value)}
+                  rows={3}
+                />
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowAddPrinterModal(false);
+                    setPrinterToEdit(null);
+                    setPrinterName('');
+                    setPrinterConfig('');
+                    setPrinterLocation('');
+                    setPrinterRequirements('');
+                  }}
+                  className="flex-1 py-3 font-bold text-slate-500 hover:bg-slate-50 rounded-xl transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 bg-black text-white py-3 rounded-xl font-bold hover:bg-slate-800 transition-all shadow-lg shadow-black/20"
+                >
+                  {printerToEdit ? 'Save Changes' : 'Add Printer'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* View Printer Details Modal */}
+      {printerToView && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setPrinterToView(null)} />
+          <div className="relative bg-white w-full max-w-md rounded-3xl p-8 shadow-2xl animate-in zoom-in-95 duration-200">
+            <div className="flex justify-between items-start mb-6">
+              <div>
+                <h3 className="text-2xl font-display font-bold text-slate-900">{printerToView.name}</h3>
+                <span className={`inline-block mt-2 px-2.5 py-1 rounded-lg text-xs font-bold uppercase ${printerToView.status === 'active' ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-500'}`}>
+                  {printerToView.status}
+                </span>
+              </div>
+              <button onClick={() => setPrinterToView(null)} className="p-2 hover:bg-slate-100 rounded-full transition-colors">
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div className="bg-slate-50 p-4 rounded-xl border border-slate-100">
+                <label className="block text-xs font-bold text-slate-400 uppercase mb-1">Configuration</label>
+                <p className="font-medium text-slate-900">{printerToView.configuration}</p>
+              </div>
+
+              <div className="bg-slate-50 p-4 rounded-xl border border-slate-100">
+                <label className="block text-xs font-bold text-slate-400 uppercase mb-1">Location</label>
+                <p className="font-medium text-slate-900 flex items-center gap-2">
+                  <MapPin size={14} className="text-slate-400" />
+                  {printerToView.location}
+                </p>
+              </div>
+
+              {printerToView.requirements && (
+                <div className="bg-slate-50 p-4 rounded-xl border border-slate-100">
+                  <label className="block text-xs font-bold text-slate-400 uppercase mb-1">Requirements</label>
+                  <p className="font-medium text-slate-900 text-sm whitespace-pre-wrap">{printerToView.requirements}</p>
+                </div>
+              )}
+
+              <div className="pt-4 flex justify-end">
+                <button
+                  onClick={() => {
+                    setPrinterToView(null);
+                    handleEditPrinter(printerToView);
+                  }}
+                  className="px-6 py-2.5 bg-slate-900 text-white rounded-xl font-bold hover:bg-slate-800 transition-colors text-sm"
+                >
+                  Edit Printer
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Delete Printer Confirmation Modal */}
+      {
+        printerToDelete && (
+          <div className="fixed inset-0 z-[80] flex items-center justify-center p-4">
+            <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setPrinterToDelete(null)} />
+            <div className="relative bg-white w-full max-w-sm rounded-3xl p-8 shadow-2xl animate-in zoom-in-95 duration-200">
+              <div className="flex flex-col items-center text-center">
+                <div className="w-16 h-16 bg-rose-50 text-rose-500 flex items-center justify-center rounded-2xl mb-4">
+                  <Trash2 size={32} />
+                </div>
+                <h3 className="text-xl font-display font-bold text-slate-900 mb-2">Remove Printer?</h3>
+                <p className="text-slate-500 mb-8">This action cannot be undone. The printer configuration and history will be lost.</p>
+
+                <div className="flex gap-3 w-full">
+                  <button
+                    onClick={() => setPrinterToDelete(null)}
+                    className="flex-1 py-3 font-bold text-slate-500 hover:bg-slate-50 rounded-xl transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={confirmDeletePrinter}
+                    className="flex-1 bg-rose-600 text-white py-3 rounded-xl font-bold hover:bg-rose-700 transition-all shadow-lg shadow-rose-200"
+                  >
+                    Delete
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )
+      }
+
+      {/* Delete Client Confirmation Modal */}
+      {
+        clientToDelete && (
+          <div className="fixed inset-0 z-[80] flex items-center justify-center p-4">
+            <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setClientToDelete(null)} />
+            <div className="relative bg-white w-full max-w-sm rounded-3xl p-8 shadow-2xl animate-in zoom-in-95 duration-200">
+              <div className="flex flex-col items-center text-center">
+                <div className="w-16 h-16 bg-rose-50 text-rose-500 flex items-center justify-center rounded-2xl mb-4">
+                  <Trash2 size={32} />
+                </div>
+                <h3 className="text-xl font-display font-bold text-slate-900 mb-2">Remove Client?</h3>
+                <p className="text-slate-500 mb-8">This will permanently remove the shop and all its associated data from the directory.</p>
+
+                <div className="flex gap-3 w-full">
+                  <button
+                    onClick={() => setClientToDelete(null)}
+                    className="flex-1 py-3 font-bold text-slate-500 hover:bg-slate-50 rounded-xl transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={confirmDeleteClient}
+                    className="flex-1 bg-rose-600 text-white py-3 rounded-xl font-bold hover:bg-rose-700 transition-all shadow-lg shadow-rose-200"
+                  >
+                    Delete
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )
+      }
+
+      {
+        showOnboardModal && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+            <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowOnboardModal(false)} />
+            <div className="relative bg-white w-full max-w-md rounded-3xl p-8 shadow-2xl">
+              <button onClick={() => setShowOnboardModal(false)} className="absolute top-6 right-6 text-slate-400 hover:text-black">
+                <X size={24} />
+              </button>
+              <h3 className="text-2xl font-display font-bold mb-2">Onboard New Shop</h3>
+              <p className="text-slate-500 mb-6">Register a new IoT printer node.</p>
+
+              <form onSubmit={handleOnboard} className="space-y-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-400 uppercase mb-2">Shop Name *</label>
+                  <input
+                    required
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all"
+                    placeholder="e.g. Metro Print Hub"
+                    value={newShopName}
+                    onChange={(e) => setNewShopName(e.target.value)}
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-400 uppercase mb-2">Location *</label>
+                  <input
+                    required
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all"
+                    placeholder="e.g. Bangalore, KA"
+                    value={newLocation}
+                    onChange={(e) => setNewLocation(e.target.value)}
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-400 uppercase mb-2">Phone Number *</label>
+                  <input
+                    required
+                    type="tel"
+                    className={`w-full px-4 py-3 bg-slate-50 border rounded-xl outline-none focus:ring-2 focus:ring-black transition-all ${phoneError ? 'border-rose-500 focus:ring-rose-200' : 'border-slate-200'}`}
+                    placeholder="e.g. 9876543210 (10 digits)"
+                    value={phoneNumber}
+                    onChange={(e) => {
+                      setPhoneNumber(e.target.value);
+                      if (phoneError) setPhoneError('');
+                    }}
+                  />
+                  {phoneError && (
+                    <p className="text-rose-500 text-xs mt-1 font-bold flex items-center gap-1">
+                      <AlertCircle size={12} /> {phoneError}
+                    </p>
+                  )}
+                </div>
+
+                <div>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={isInstitution}
+                      onChange={(e) => setIsInstitution(e.target.checked)}
+                      className="rounded"
+                    />
+                    <span className="text-sm font-medium text-slate-700">This is an institution</span>
+                  </label>
+                </div>
+
+                {isInstitution && (
+                  <div className="animate-in fade-in slide-in-from-top-2 duration-300">
+                    <label className="block text-xs font-bold text-slate-400 uppercase mb-2">Email ID *</label>
+                    <input
+                      required
+                      type="email"
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all"
+                      placeholder="e.g. admin@institution.edu"
+                      value={emailId}
+                      onChange={(e) => setEmailId(e.target.value)}
+                    />
+                  </div>
+                )}
+
+                <button type="submit" className="w-full bg-black text-white py-4 rounded-xl font-bold hover:bg-slate-800 transition-all mt-6 shadow-lg">Complete Registration</button>
+              </form>
+            </div>
+          </div>
+        )
+      }
+
+      {isSidebarOpen && <div className="fixed inset-0 bg-black/50 z-40 lg:hidden" onClick={() => setIsSidebarOpen(false)} />}
+
+      <div className={`fixed inset-y-0 left-0 z-50 transform lg:relative lg:translate-x-0 transition-transform duration-300 ease-in-out ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+        <Sidebar
+          activeView={activeView}
+          setActiveView={(v) => { setActiveView(v); setSelectedClient(null); }}
+          onSignOut={handleSignOut}
+        />
+      </div>
+
+      <div className="flex flex-1 min-w-0">
+        <main className={`flex-1 min-w-0 p-4 lg:p-10 transition-all ${showDetailsPanel && selectedClient && activeView === 'customers' ? 'lg:mr-96' : ''}`}>
+          <div className="flex lg:hidden items-center justify-between mb-6">
+            <div className="w-8 h-8 bg-black flex items-center justify-center rounded-lg">
+              <span className="text-white font-bold">P</span>
+            </div>
+            <button onClick={() => setIsSidebarOpen(true)} className="p-2 hover:bg-white rounded-lg border border-slate-200">
+              <Menu size={20} />
+            </button>
+          </div>
+
+          <header className="flex flex-col md:flex-row md:items-end justify-between mb-10 gap-6">
+            <div className="max-w-xl">
+              {selectedClient && (
+                <button onClick={() => setSelectedClient(null)} className="flex items-center gap-2 text-slate-500 hover:text-black mb-4 font-bold">
+                  <ArrowLeft size={18} /> Back to Directory
+                </button>
+              )}
+              <div className="flex flex-col gap-1">
+                <h2 className="text-4xl font-display font-bold text-slate-900 mb-2">
+                  {selectedClient ? selectedClient.shopName : (activeView === 'customers' ? 'Client Directory' : activeView === 'reports' ? 'Support Inbox' : activeView === 'transactions' ? 'Transaction Logs' : 'Network Overview')}
+                </h2>
+                {selectedClient && (
+                  <div className="flex items-center gap-4 text-sm font-medium text-slate-500 mt-2">
+                    <span className="flex items-center gap-1.5 bg-slate-100 px-3 py-1.5 rounded-lg text-slate-600">
+                      <Printer size={14} /> {selectedClient.printers?.length || 0} Printers
+                    </span>
+                  </div>
+                )}
+                <p className="text-slate-500 text-lg mt-2">
+                  {selectedClient ? `Full audit log for Device ID: ${selectedClient.deviceId}` : (activeView === 'transactions' ? 'Real-time monitoring of all print jobs, payments, and system errors.' : 'Manage and monitor all printer IoT deployments across your network.')}
+                </p>
+                <div className="flex items-center gap-2 mt-3">
+                  <div className={`w-2 h-2 rounded-full ${dbStatus === 'connected' ? 'bg-emerald-500' : dbStatus === 'error' ? 'bg-rose-500' : 'bg-amber-400 animate-pulse'}`} />
+                  <span className={`text-xs font-bold ${dbStatus === 'connected' ? 'text-emerald-600' : dbStatus === 'error' ? 'text-rose-600' : 'text-amber-600'}`}>
+                    {dbStatus === 'connected' ? 'Firestore Connected' : dbStatus === 'error' ? 'Firestore Error — check Rules' : 'Connecting to Firestore...'}
+                  </span>
+                </div>
+              </div>
+            </div>
+            {activeView === 'customers' && !selectedClient && (
+              <button onClick={() => setShowOnboardModal(true)} className="flex items-center justify-center gap-2 bg-black text-white px-8 py-4 rounded-full font-bold hover:bg-slate-800 transition-all shadow-xl shadow-black/10 active:scale-95 w-full md:w-auto">
+                <Plus size={20} /> Onboard Shop
+              </button>
+            )}
+            {/* Header Actions for Selected Client */}
+            {activeView === 'customers' && selectedClient && (
+              <div className="flex flex-col sm:flex-row gap-3 w-full md:w-auto">
+                <button onClick={handleOpenShopSettings} className="flex items-center justify-center gap-2 bg-white text-slate-700 border border-slate-200 px-6 py-3 rounded-full font-bold hover:bg-slate-50 transition-all shadow-sm active:scale-95 w-full sm:w-auto">
+                  <Settings size={18} /> Shop Settings
+                </button>
+                <button onClick={() => setShowAddPrinterModal(true)} className="flex items-center justify-center gap-2 bg-black text-white px-6 py-3 rounded-full font-bold hover:bg-slate-800 transition-all shadow-xl shadow-black/10 active:scale-95 w-full sm:w-auto">
+                  <Plus size={18} /> Add Printer
+                </button>
+              </div>
+            )}
+          </header>
+
+          {/* Merged printer/report counts for the selected client */}
+          {(() => {
+            const clientPrintersFromCollection = selectedClient
+              ? allPrinterDocs.filter(p => p.clientId === selectedClient.id || p.shopName === selectedClient.shopName)
+              : [];
+            const nestedPrinterIds = new Set((selectedClient?.printers || []).map((p: any) => p.id));
+            const extraPrinters = clientPrintersFromCollection.filter(p => !nestedPrinterIds.has(p.id));
+            const mergedPrinters = [...(selectedClient?.printers || []), ...extraPrinters];
+
+            const clientReportsFromCollection = selectedClient
+              ? allReportDocs.filter(r => r.clientId === selectedClient.id || r.shopName === selectedClient.shopName)
+              : [];
+            const nestedReportIds = new Set((selectedClient?.reports || []).map((r: any) => r.id));
+            const extraReports = clientReportsFromCollection.filter(r => !nestedReportIds.has(r.id));
+            const mergedReports = [...(selectedClient?.reports || []), ...extraReports];
+            const pendingMergedReports = mergedReports.filter(r => r.status === 'pending');
+
+            return (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 mb-10">
+                <StatCard label="Total Prints" value={selectedClient ? (selectedClient.history?.reduce((acc, curr) => acc + curr.pages, 0) || 0).toString() : totalPrints.toLocaleString()} icon={<Printer size={16} />} iconBg="bg-blue-50" iconColor="text-blue-600" />
+                <StatCard label={selectedClient ? "Deployed Units" : "Deployed Units (Printers)"} value={selectedClient ? mergedPrinters.length.toString() : totalPrinters.toString()} icon={<LayoutGrid size={16} />} iconBg="bg-emerald-50" iconColor="text-emerald-600" />
+                <StatCard label={selectedClient ? "Tickets" : "Open Reports"} value={selectedClient ? pendingMergedReports.length.toString() : pendingReportsCount.toString()} icon={<MessageSquare size={16} />} iconBg="bg-amber-50" iconColor="text-amber-600" highlight={selectedClient ? pendingMergedReports.length > 0 : pendingReportsCount > 0} />
+              </div>
+            );
+          })()}
+
+          {activeView === 'customers' && !selectedClient && (
+            <>
+              <div className="glass-header border border-slate-200 p-3 lg:p-4 rounded-3xl mb-8 flex flex-col md:flex-row gap-4 items-center shadow-sm sticky top-4 z-30">
+                <div className="relative flex-1 w-full">
+                  <Search className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                  <input className="w-full pl-12 pr-6 py-4 bg-slate-50 border-none rounded-full focus:ring-2 focus:ring-black outline-none font-medium text-slate-900" placeholder="Search Directory..." type="text" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
+                </div>
+                <div className="flex items-center gap-3 w-full md:w-auto">
+                  <button onClick={toggleFilter} className={`flex-1 md:flex-none p-4 border rounded-2xl flex items-center justify-center gap-2 font-medium ${statusFilter !== 'all' ? 'bg-black text-white' : 'bg-white text-slate-600'}`}>
+                    <Filter size={18} /> {statusFilter.toUpperCase()}
+                  </button>
+                  <button onClick={handleExport} className="p-4 border border-slate-200 bg-white rounded-2xl hover:bg-slate-50 transition-colors text-slate-600">
+                    <Download size={18} />
+                  </button>
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <div className="space-y-4">
+                  {paginatedClients.map(client => <ClientCard key={client.id} client={client} onClick={handleSelectClient} onDelete={handleDeleteClient} />)}
+                </div>
+                {clients.length === 0 && dbStatus === 'connected' && (
+                  <div className="flex flex-col items-center justify-center py-24 text-center">
+                    <div className="w-20 h-20 bg-slate-100 rounded-3xl flex items-center justify-center mb-6">
+                      <Layers size={36} className="text-slate-400" />
+                    </div>
+                    <h3 className="text-xl font-bold text-slate-900 mb-2">No Clients Yet</h3>
+                    <p className="text-slate-500 max-w-sm">Connected to Firestore. Onboard your first shop using the button above.</p>
+                  </div>
+                )}
+                {dbStatus === 'error' && (
+                  <div className="flex flex-col items-center justify-center py-24 text-center">
+                    <div className="w-20 h-20 bg-rose-50 rounded-3xl flex items-center justify-center mb-6">
+                      <AlertCircle size={36} className="text-rose-500" />
+                    </div>
+                    <h3 className="text-xl font-bold text-slate-900 mb-2">Firestore Connection Failed</h3>
+                    <p className="text-slate-500 max-w-sm">Check your Firestore Rules — set them to allow read/write and try again.</p>
+                  </div>
+                )}
+                {dbStatus === 'connecting' && (
+                  <div className="flex items-center justify-center py-24">
+                    <div className="w-8 h-8 border-2 border-slate-200 border-t-black rounded-full animate-spin" />
+                    <span className="ml-3 text-slate-500 font-medium">Connecting to Firestore...</span>
+                  </div>
+                )}
+              </div>
+
+              {totalPages > 1 && (
+                <div className="mt-12 flex items-center justify-center gap-4">
+                  <button onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))} disabled={currentPage === 1} className="p-3 border rounded-xl disabled:opacity-50 hover:bg-white"><ArrowLeft size={18} /></button>
+                  <span className="text-sm font-bold">Page {currentPage} of {totalPages}</span>
+                  <button onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))} disabled={currentPage === totalPages} className="p-3 border rounded-xl disabled:opacity-50 hover:bg-white"><ArrowRight size={18} /></button>
+                </div>
+              )}
+            </>
+          )}
+
+          {activeView === 'customers' && selectedClient && (() => {
+            // Merge printers from top-level `printers` collection + nested client.printers[]
+            const fromCollection = allPrinterDocs.filter(
+              p => p.clientId === selectedClient.id || p.shopName === selectedClient.shopName
+            );
+            const nestedIds = new Set((selectedClient.printers || []).map((p: any) => p.id));
+            const merged = [
+              ...(selectedClient.printers || []),
+              ...fromCollection.filter(p => !nestedIds.has(p.id))
+            ];
+            return (
+              <div className="space-y-10 animate-in fade-in duration-500">
+                {/* Printers Section */}
+                {merged.length > 0 && (
+                  <div>
+                    <h3 className="text-2xl font-display font-bold mb-6 flex items-center gap-2"><Printer className="text-slate-900" /> Connected Printers</h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+                      {merged.map(printer => (
+                        <div key={printer.id} className="bg-white border p-3 rounded-2xl flex flex-col gap-1.5 relative overflow-hidden group">
+                          <div className="absolute top-0 right-0 p-1 opacity-0 group-hover:opacity-100 transition-opacity flex gap-1 bg-white/80 backdrop-blur-sm rounded-bl-xl border-b border-l border-slate-100">
+                            <button
+                              onClick={() => handleViewPrinter(printer)}
+                              className="bg-slate-100 p-1.5 rounded-lg text-slate-500 hover:text-black cursor-pointer hover:bg-slate-200 transition-colors"
+                              title="View Details"
+                            >
+                              <Eye size={14} />
+                            </button>
+                            <button
+                              onClick={() => handleEditPrinter(printer)}
+                              className="bg-slate-100 p-1.5 rounded-lg text-slate-500 hover:text-black cursor-pointer hover:bg-slate-200 transition-colors"
+                              title="Edit Printer"
+                            >
+                              <Pencil size={14} />
+                            </button>
+                            <button
+                              onClick={() => handleDeletePrinter(printer.id)}
+                              className="bg-rose-50 p-1.5 rounded-lg text-rose-500 hover:text-rose-700 cursor-pointer hover:bg-rose-100 transition-colors"
+                              title="Remove Printer"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                          <div className="flex justify-between items-start">
+                            <div className="pr-16">
+                              <h4 className="font-bold text-base text-slate-900 leading-tight">{printer.name}</h4>
+                              <p className="text-xs text-slate-500 mt-0.5 line-clamp-1">{printer.configuration}</p>
+                            </div>
+                            <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold uppercase ${printer.status === 'active' ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-500'}`}>{printer.status}</span>
+                          </div>
+                          <div className="pt-2 border-t mt-1 flex items-center gap-1.5 text-xs text-slate-400">
+                            <MapPin size={12} /> {printer.location}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <div>
+                  <h3 className="text-2xl font-display font-bold mb-6 flex items-center gap-2"><Clock className="text-blue-500" /> Usage History</h3>
+                  <div className="bg-white border border-slate-200 rounded-3xl overflow-hidden">
+                    <table className="w-full text-left">
+                      <thead className="bg-slate-50 border-b border-slate-200">
+                        <tr><th className="px-6 py-4 text-xs font-bold uppercase tracking-widest text-slate-400">Time</th><th className="px-6 py-4 text-xs font-bold uppercase tracking-widest text-slate-400">Type</th><th className="px-6 py-4 text-xs font-bold uppercase tracking-widest text-slate-400">Volume</th><th className="px-6 py-4 text-xs font-bold uppercase tracking-widest text-slate-400 text-right">State</th></tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {selectedClient.history?.map(job => (
+                          <tr key={job.id} className="hover:bg-slate-50/50">
+                            <td className="px-6 py-4 text-sm font-medium">{job.timestamp}</td>
+                            <td className="px-6 py-4"><span className={`px-2 py-0.5 rounded text-[10px] font-bold ${job.type === 'Color' ? 'bg-indigo-50 text-indigo-600' : 'bg-slate-100 text-slate-600'}`}>{job.type}</span></td>
+                            <td className="px-6 py-4 text-sm">{job.pages} pages</td>
+                            <td className="px-6 py-4 text-right text-sm font-bold text-emerald-500">{job.status}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <div>
+                  <h3 className="text-2xl font-display font-bold mb-6 flex items-center gap-2"><AlertCircle className="text-amber-500" /> Maintenance Tickets</h3>
+                  <div className="space-y-4">
+                    {selectedClient.reports?.map(report => (
+                      <div key={report.id} className="bg-white border p-6 rounded-2xl flex items-center justify-between">
+                        <div>
+                          <div className="flex items-center gap-2 mb-1"><div className="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></div><span className="text-[10px] font-bold text-slate-400 uppercase">{report.timestamp}</span></div>
+                          <p className="font-medium">{report.issue}</p>
+                        </div>
+                        {report.status === 'pending' ? (
+                          <button onClick={() => handleResolveReport(selectedClient.id, report.id)} className="bg-black text-white px-6 py-2 rounded-full text-xs font-bold">Resolve</button>
+                        ) : <span className="text-emerald-600 bg-emerald-50 px-4 py-1.5 rounded-full text-xs font-bold">Resolved</span>}
+                      </div>
+                    )) || <div className="p-10 text-center bg-slate-50 border border-dashed rounded-3xl text-slate-400">No active tickets for this device.</div>}
+                  </div>
+                </div>
+
+
+                {/* Transaction History Table */}
+                {selectedClient.history && selectedClient.history.length > 0 && (
+                  <div>
+                    <h3 className="text-2xl font-display font-bold mb-6 flex items-center gap-2"><Receipt className="text-slate-900" /> Transaction History</h3>
+                    <div className="bg-white border border-slate-200 rounded-3xl overflow-hidden shadow-sm">
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left whitespace-nowrap">
+                          <thead className="bg-slate-50 border-b border-slate-200">
+                            <tr>
+                              <th className="px-6 py-4 text-xs font-bold uppercase tracking-widest text-slate-400">ID / User</th>
+                              <th className="px-6 py-4 text-xs font-bold uppercase tracking-widest text-slate-400">Details</th>
+                              <th className="px-6 py-4 text-xs font-bold uppercase tracking-widest text-slate-400">Cost</th>
+                              <th className="px-6 py-4 text-xs font-bold uppercase tracking-widest text-slate-400 text-center">Status</th>
+                              <th className="px-6 py-4 text-xs font-bold uppercase tracking-widest text-slate-400 text-right">Actions</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100">
+                            {selectedClient.history.map((job) => (
+                              <tr key={job.id} className="hover:bg-slate-50/50 transition-colors">
+                                <td className="px-6 py-4">
+                                  <div className="flex flex-col">
+                                    <span className="font-mono font-bold text-slate-900 text-blue-600">#{job.id}</span>
+                                    <span className="text-xs text-slate-400">{job.timestamp}</span>
+                                  </div>
+                                </td>
+                                <td className="px-6 py-4">
+                                  <div className="flex flex-col">
+                                    <span className="font-medium text-slate-900">{job.pages} pgs • {job.type}</span>
+                                    <span className="text-xs text-slate-500 flex items-center gap-1"><Printer size={10} /> {job.printerName}</span>
+                                  </div>
+                                </td>
+                                <td className="px-6 py-4">
+                                  <div className="flex flex-col">
+                                    <span className="font-bold text-slate-900">{job.cost}</span>
+                                    <span className={`text-[10px] font-bold uppercase ${job.paymentStatus === 'Paid' ? 'text-emerald-600' : job.paymentStatus === 'Pending' ? 'text-amber-600' : 'text-rose-600'}`}>{job.paymentStatus}</span>
+                                  </div>
+                                </td>
+                                <td className="px-6 py-4 text-center">
+                                  {job.status === 'Completed' ? (
+                                    <div className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-emerald-50 text-emerald-600"><CheckCircle2 size={16} /></div>
+                                  ) : (
+                                    <div className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-rose-50 text-rose-600"><AlertTriangle size={16} /></div>
+                                  )}
+                                </td>
+                                <td className="px-6 py-4 text-right">
+                                  <div className="flex items-center justify-end gap-2">
+                                    {job.paymentStatus === 'Pending' && (
+                                      <button
+                                        onClick={() => handleUpdateTransactionStatus(selectedClient.id, job.id, 'Paid')}
+                                        className="px-3 py-1 bg-black text-white text-[10px] font-bold rounded-lg hover:bg-slate-800 transition-colors"
+                                      >
+                                        Mark Paid
+                                      </button>
+                                    )}
+                                    {job.paymentStatus === 'Paid' && (
+                                      <button
+                                        onClick={() => handleUpdateTransactionStatus(selectedClient.id, job.id, 'Refunded')}
+                                        className="px-3 py-1 border border-slate-200 text-slate-600 text-[10px] font-bold rounded-lg hover:bg-slate-50 transition-colors"
+                                      >
+                                        Refund
+                                      </button>
+                                    )}
+                                    {job.paymentStatus !== 'Pending' && job.paymentStatus !== 'Paid' && (
+                                      <button className="p-2 text-slate-400 hover:text-black transition-colors rounded-lg hover:bg-slate-50">
+                                        <Eye size={16} />
+                                      </button>
+                                    )}
+                                  </div>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </div>
+
+                )}
+              </div>
+            );
+          })()}
+
+          {activeView === 'reports' && (
+            <div className="space-y-6 animate-in fade-in duration-500">
+              {allReports.map(report => (
+                <div key={report.id} className="bg-white border rounded-3xl p-8 hover:shadow-lg transition-all flex flex-col lg:flex-row gap-6 items-center">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-3 mb-2">
+                      <div className={`w-3 h-3 rounded-full ${report.status === 'pending' ? 'bg-amber-500 animate-pulse' : 'bg-emerald-500'}`}></div>
+                      <span className="text-xs font-bold uppercase tracking-widest text-slate-500">{report.shopName}</span>
+                    </div>
+                    <h4 className="text-xl font-bold mb-4">{report.issue}</h4>
+                    <p className="text-slate-400 text-sm">Log Entry: {report.timestamp}</p>
+                  </div>
+                  {report.status === 'pending' && <button onClick={() => { handleResolveReport(report.clientId || (clients.find(cl => cl.shopName === report.shopName)?.id || ''), report.id) }} className="bg-black text-white px-8 py-3 rounded-xl font-bold">Resolve Ticket</button>}
+                </div>
+              ))}
+            </div>
+          )
+          }
+
+
+
+
+          {
+            activeView === 'transactions' && (
+              <div className="space-y-6 animate-in fade-in duration-500">
+                <div className="flex items-center justify-between mb-6">
+                  <h3 className="text-2xl font-display font-bold text-slate-900">All Transactions</h3>
+                  <div className="flex items-center gap-3">
+                    <div className="relative">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+                      <input
+                        className="pl-9 pr-4 py-2.5 bg-slate-50 border-none rounded-xl focus:ring-2 focus:ring-black outline-none font-medium text-slate-900 text-sm w-80 md:w-96 transition-all"
+                        placeholder="Search transactions..."
+                        type="text"
+                        value={transactionsSearchQuery}
+                        onChange={(e) => setTransactionsSearchQuery(e.target.value)}
+                      />
+                    </div>
+                    <button onClick={handleExport} className="p-2.5 border border-slate-200 bg-white rounded-xl hover:bg-slate-50 transition-colors text-slate-600" title="Export CSV">
+                      <Download size={18} />
+                    </button>
+                    <button onClick={() => setActiveView('dashboard')} className="p-2.5 bg-slate-900 text-white rounded-xl hover:bg-slate-800 transition-colors" title="Back to Dashboard">
+                      <X size={18} />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="bg-white border border-slate-200 rounded-3xl overflow-hidden shadow-sm">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left whitespace-nowrap">
+                      <thead className="bg-slate-50 border-b border-slate-200">
+                        <tr>
+                          <th className="px-6 py-4 text-xs font-bold uppercase tracking-widest text-slate-400">Shop / Printer</th>
+                          <th className="px-6 py-4 text-xs font-bold uppercase tracking-widest text-slate-400">User / Phone</th>
+                          <th className="px-6 py-4 text-xs font-bold uppercase tracking-widest text-slate-400">Job Details</th>
+                          <th className="px-6 py-4 text-xs font-bold uppercase tracking-widest text-slate-400">Status</th>
+                          <th className="px-6 py-4 text-xs font-bold uppercase tracking-widest text-slate-400">Payment</th>
+                          <th className="px-6 py-4 text-xs font-bold uppercase tracking-widest text-slate-400 text-right">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {allTransactions.filter(tx =>
+                          tx.shopName.toLowerCase().includes(transactionsSearchQuery.toLowerCase()) ||
+                          tx.userPhoneNumber.includes(transactionsSearchQuery) ||
+                          tx.status.toLowerCase().includes(transactionsSearchQuery.toLowerCase()) ||
+                          tx.paymentStatus.toLowerCase().includes(transactionsSearchQuery.toLowerCase())
+                        ).map(tx => (
+                          <tr key={tx.id} className="hover:bg-slate-50/50 transition-colors">
+                            <td className="px-6 py-4">
+                              <div className="flex flex-col">
+                                <span className="font-bold text-slate-700">{tx.shopName}</span>
+                                <span className="text-xs text-slate-400">{tx.printerName}</span>
+                              </div>
+                            </td>
+                            <td className="px-6 py-4">
+                              <div className="flex flex-col">
+                                <span className="font-bold text-slate-900">{tx.userPhoneNumber}</span>
+                                <span className="text-xs text-slate-400">{tx.timestamp}</span>
+                              </div>
+                            </td>
+                            <td className="px-6 py-4">
+                              <div className="flex flex-col">
+                                <span className="text-sm font-medium">{tx.pages} pages • {tx.type}</span>
+                                <span className="text-xs font-bold text-slate-900">{tx.cost}</span>
+                              </div>
+                            </td>
+                            <td className="px-6 py-4">
+                              <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold ${tx.status === 'Completed' ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
+                                {tx.status === 'Completed' ? <CheckCircle2 size={12} /> : <AlertTriangle size={12} />}
+                                {tx.status}
+                              </span>
+                              {tx.errorDetails && <div className="text-[10px] text-rose-500 mt-1 font-medium">{tx.errorDetails}</div>}
+                            </td>
+                            <td className="px-6 py-4">
+                              <span className={`px-2.5 py-1 rounded-full text-xs font-bold ${tx.paymentStatus === 'Paid' ? 'bg-emerald-50 text-emerald-600' :
+                                tx.paymentStatus === 'Pending' ? 'bg-amber-50 text-amber-600' :
+                                  tx.paymentStatus === 'Refunded' ? 'bg-blue-50 text-blue-600' : 'bg-rose-50 text-rose-600'
+                                }`}>
+                                {tx.paymentStatus}
+                              </span>
+                            </td>
+                            <td className="px-6 py-4 text-right">
+                              <div className="flex items-center justify-end gap-2">
+                                {tx.paymentStatus === 'Pending' && (
+                                  <button
+                                    onClick={() => handleUpdateTransactionStatus(tx.clientId, tx.id, 'Paid')}
+                                    className="px-3 py-1.5 bg-black text-white text-xs font-bold rounded-lg hover:bg-slate-800 transition-colors"
+                                  >
+                                    Mark Paid
+                                  </button>
+                                )}
+                                {tx.paymentStatus === 'Paid' && (
+                                  <button
+                                    onClick={() => handleUpdateTransactionStatus(tx.clientId, tx.id, 'Refunded')}
+                                    className="px-3 py-1.5 border border-slate-200 text-slate-600 text-xs font-bold rounded-lg hover:bg-slate-50 transition-colors"
+                                  >
+                                    Refund
+                                  </button>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            )
+          }
+
+          {
+            activeView === 'dashboard' && (
+              <div className="space-y-8 animate-in zoom-in-95 duration-500">
+
+                {/* Dashboard Stats */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                  <StatCard
+                    label="Total Revenue"
+                    value={`₹${totalRevenue}`}
+                    icon={<Receipt size={24} />}
+                    iconBg="bg-emerald-50"
+                    iconColor="text-emerald-600"
+                  />
+                  <StatCard
+                    label="Total Printers"
+                    value={totalPrinters.toString()}
+                    icon={<Printer size={24} />}
+                    iconBg="bg-blue-50"
+                    iconColor="text-blue-600"
+                  />
+                  <StatCard
+                    label="Total Prints Processed"
+                    value={totalPrints.toLocaleString()}
+                    icon={<FileText size={24} />}
+                    iconBg="bg-indigo-50"
+                    iconColor="text-indigo-600"
+                  />
+                </div>
+
+                {/* Recent Transactions Preview */}
+                <div>
+                  <div className="flex items-center justify-between mb-6">
+                    <h3 className="text-2xl font-display font-bold text-slate-900">Recent Transactions</h3>
+                    <div className="flex items-center gap-3">
+                      <div className="relative">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+                        <input
+                          className="pl-9 pr-4 py-2 bg-slate-50 border-none rounded-xl focus:ring-2 focus:ring-black outline-none font-medium text-slate-900 text-sm w-64 transition-all"
+                          placeholder="Search transactions..."
+                          type="text"
+                          value={dashboardSearchQuery}
+                          onChange={(e) => setDashboardSearchQuery(e.target.value)}
+                        />
+                      </div>
+                      <button onClick={() => setActiveView('transactions')} className="text-sm font-bold text-slate-500 hover:text-black flex items-center gap-1">
+                        View All <ArrowRight size={16} />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+                <div className="bg-white border border-slate-200 rounded-3xl overflow-hidden shadow-sm">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left whitespace-nowrap">
+                      <thead className="bg-slate-50 border-b border-slate-200">
+                        <tr>
+                          <th className="px-6 py-4 text-xs font-bold uppercase tracking-widest text-slate-400">Shop</th>
+                          <th className="px-6 py-4 text-xs font-bold uppercase tracking-widest text-slate-400">User</th>
+                          <th className="px-6 py-4 text-xs font-bold uppercase tracking-widest text-slate-400">Status</th>
+                          <th className="px-6 py-4 text-xs font-bold uppercase tracking-widest text-slate-400 text-right">Amount</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {allTransactions.filter(tx =>
+                          tx.shopName.toLowerCase().includes(dashboardSearchQuery.toLowerCase()) ||
+                          tx.userPhoneNumber.includes(dashboardSearchQuery) ||
+                          tx.status.toLowerCase().includes(dashboardSearchQuery.toLowerCase())
+                        ).slice(0, 5).map(tx => (
+                          <tr key={tx.id} className="hover:bg-slate-50/50 transition-colors">
+                            <td className="px-6 py-4 text-sm text-slate-600">{tx.shopName}</td>
+                            <td className="px-6 py-4">
+                              <span className="font-bold text-slate-900">{tx.userPhoneNumber}</span>
+                            </td>
+                            <td className="px-6 py-4">
+                              <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold ${tx.status === 'Completed' ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
+                                {tx.status}
+                              </span>
+                            </td>
+                            <td className="px-6 py-4 text-right font-bold text-slate-900">{tx.cost}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+
+
+            )
+          }
+        </main >
+
+
+        {/* Customer Details Sidebar */}
+        {
+          showDetailsPanel && selectedClient && activeView === 'customers' && (
+            <div className="fixed lg:fixed right-0 top-0 bottom-0 w-full lg:w-96 bg-white border-l border-slate-200 shadow-2xl z-50 overflow-y-auto animate-in slide-in-from-right duration-300">
+              <div className="sticky top-0 bg-white border-b border-slate-200 p-6 z-10">
+                <div className="flex justify-between items-center mb-0">
+                  <h3 className="text-xl font-display font-bold text-slate-900">Customer Details</h3>
+                  <button
+                    onClick={() => setShowDetailsPanel(false)}
+                    className="p-2 hover:bg-slate-100 rounded-lg transition-colors"
+                  >
+                    <X size={20} />
+                  </button>
+                </div>
+              </div>
+
+              <div className="p-6 space-y-6">
+                {/* Shop Info */}
+                <div>
+                  <div className="flex items-center gap-3 mb-4">
+                    <div className="w-12 h-12 bg-slate-900 rounded-xl flex items-center justify-center text-white">
+                      <Store size={24} />
+                    </div>
+                    <div>
+                      {/* Client Name with Status Indicator */}
+                      <div className="relative">
+                        <h4 className="font-display font-bold text-base text-slate-900 flex items-center gap-2">
+                          {selectedClient.shopName}
+                          {/* Red Dot Indicator for Issued Transactions */}
+                          {selectedClient.history?.some(h => h.status === 'Failed' || h.paymentStatus === 'Pending') && (
+                            <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" title="Requires Attention"></span>
+                          )}
+                        </h4>
+                        <p className="text-xs text-slate-500 flex items-center gap-1">
+                          <MapPin size={14} />
+                          {selectedClient.location}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Status Badge */}
+                  <div className="bg-slate-50 rounded-xl p-4 border border-slate-100">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Status</span>
+                      <div className="flex items-center gap-2">
+                        <div className={`w-2.5 h-2.5 rounded-full shadow-sm ${selectedClient.status === 'active' ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'}`}></div>
+                        <span className={`text-sm font-bold ${selectedClient.status === 'active' ? 'text-slate-900' : 'text-slate-900'}`}>
+                          {selectedClient.status === 'active' ? 'Active' : 'Offline'}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="h-px bg-slate-100 my-6" />
+
+                  {/* Contact Information */}
+                  <div>
+                    <div className="space-y-5">
+                      {selectedClient.phoneNumber && (
+                        <div className="flex justify-between items-center group">
+                          <span className="text-sm text-slate-500 font-medium flex items-center gap-2 group-hover:text-slate-800 transition-colors">
+                            <Phone size={16} className="text-slate-400 group-hover:text-slate-600" /> Phone Number
+                          </span>
+                          <span className="text-sm font-bold text-slate-900">{selectedClient.phoneNumber}</span>
+                        </div>
+                      )}
+                      {selectedClient.email && (
+                        <div className="flex justify-between items-center group">
+                          <span className="text-sm text-slate-500 font-medium flex items-center gap-2 group-hover:text-slate-800 transition-colors">
+                            <Mail size={16} className="text-slate-400 group-hover:text-slate-600" /> Email Address
+                          </span>
+                          <span className="text-sm font-bold text-slate-900">{selectedClient.email}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="h-px bg-slate-100 my-6" />
+
+                  {/* Device Information */}
+                  <div>
+                    <div className="space-y-5">
+                      <div className="flex justify-between items-center">
+                        <span className="text-sm text-slate-500 font-medium">Device ID</span>
+                        <span className="text-sm font-mono font-bold text-slate-700 bg-slate-100 px-3 py-1.5 rounded-lg border border-slate-200">{selectedClient.deviceId}</span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-sm text-slate-500 font-medium">Subscription Plan</span>
+                        <span className={`text-sm font-bold px-3 py-1 rounded-lg ${selectedClient.planType === 'Annual' ? 'bg-blue-50 text-blue-700 border border-blue-100' : 'bg-slate-50 text-slate-700 border border-slate-100'}`}>
+                          {selectedClient.planType}
+                        </span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-sm text-slate-500 font-medium">Last Active</span>
+                        <span className="text-sm font-bold text-slate-900">{selectedClient.lastActive}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="h-px bg-slate-100 my-6" />
+
+                  {/* Quick Stats */}
+                  <div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="bg-blue-50 rounded-xl p-3">
+                        <div className="flex items-center gap-2 mb-1">
+                          <Printer size={16} className="text-blue-600" />
+                          <span className="text-xs font-bold text-blue-600">Total Printers</span>
+                        </div>
+                        <p className="text-xl font-bold text-blue-900">{selectedClientPrinters.length}</p>
+                      </div>
+                      <div className="bg-indigo-50 rounded-xl p-3">
+                        <div className="flex items-center gap-2 mb-1">
+                          <FileText size={16} className="text-indigo-600" />
+                          <span className="text-xs font-bold text-indigo-600">Total Prints</span>
+                        </div>
+                        <p className="text-xl font-bold text-indigo-900">{selectedClientTransactions.reduce((acc, curr) => acc + curr.pages, 0)}</p>
+                      </div>
+                      <div className="bg-amber-50 rounded-xl p-3">
+                        <div className="flex items-center gap-2 mb-1">
+                          <MessageSquare size={16} className="text-amber-600" />
+                          <span className="text-xs font-bold text-amber-600">Open Tickets</span>
+                        </div>
+                        <p className="text-xl font-bold text-amber-900">{selectedClientReports.filter(r => r.status === 'pending').length}</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Recent Activity */}
+                  {selectedClientTransactions.length > 0 && (
+                    <div>
+                      <h5 className="text-xs font-bold text-slate-400 uppercase mb-3">Recent Activity</h5>
+                      <div className="space-y-2">
+                        {selectedClientTransactions.slice(0, 3).map((job) => (
+                          <div key={job.id} className="bg-slate-50 rounded-lg p-3 text-sm">
+                            <div className="flex justify-between items-start mb-1">
+                              <span className="font-medium text-slate-900">{job.pages} pages</span>
+                              <span className={`text-xs px-2 py-0.5 rounded ${job.type === 'Color' ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-200 text-slate-700'}`}>
+                                {job.type}
+                              </span>
+                            </div>
+                            <p className="text-xs text-slate-500">{job.timestamp}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Actions */}
+                  <div className="pt-4 border-t">
+                    <button
+                      onClick={() => {
+                        setShowDetailsPanel(false);
+                        // Navigate to full details view
+                      }}
+                      className="w-full bg-black text-white py-3 rounded-xl font-bold hover:bg-slate-800 transition-all flex items-center justify-center gap-2"
+                    >
+                      View Full Details
+                      <ArrowRight size={18} />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )
+        }
+      </div >
+    </div >
+  );
+};
+
+export default App;
