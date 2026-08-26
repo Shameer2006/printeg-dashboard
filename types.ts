@@ -1,4 +1,3 @@
-
 import React from 'react';
 
 export type PlanType = 'Annual' | 'Monthly' | 'Starter';
@@ -39,20 +38,35 @@ export interface PrintPrices {
   twoInOne: { bw: number; color: number };
 }
 
+export interface VendorPricing {
+  bw: number;          // B&W Single Sided (Xerox)
+  doubleSided: number; // B&W Double Sided
+  color: number;       // Color Print
+  a4Sheet: number;     // Blank A4 Sheet
+}
+
 export interface Client {
   id: string;
+  slug?: string;
   shopName: string;
+  storeName?: string;
+  ownerName?: string;
   location: string;
+  address?: string;
   deviceId: string;
   planType: PlanType;
   status: StatusType;
+  isActive?: boolean;
+  themeColor?: string;
   lastActive: string;
   iconType: 'storefront' | 'school' | 'print' | 'hub';
   history?: JobHistory[];
   reports?: ClientReport[];
   printers?: Printer[];
   phoneNumber?: string;
+  phone?: string;
   email?: string;
+  pricing?: VendorPricing;
   printingPrices?: PrintPrices;
   shopInfo?: string;
   customWebsiteName?: string;

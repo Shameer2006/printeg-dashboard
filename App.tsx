@@ -32,15 +32,20 @@ import {
   Mail,
   Pencil,
   QrCode,
-  ChevronDown
+  ChevronDown,
+  Copy,
+  Check,
+  ExternalLink,
+  Wallet,
+  TrendingUp
 } from 'lucide-react';
 import { QRCodeCanvas } from 'qrcode.react';
 import { Sidebar } from './components/Sidebar';
 import { StatCard } from './components/StatCard';
 import { ClientCard } from './components/ClientCard';
-import { Client, StatusType, PrintPrices } from './types';
+import { Client, StatusType, PrintPrices, VendorPricing } from './types';
 import { db } from './src/lib/firebase';
-import { collection, onSnapshot, query, addDoc, deleteDoc, updateDoc, doc } from 'firebase/firestore';
+import { collection, onSnapshot, query, addDoc, deleteDoc, updateDoc, doc, setDoc } from 'firebase/firestore';
 
 // Define the number of items to display per page for pagination
 const ITEMS_PER_PAGE = 5;
@@ -308,11 +313,16 @@ const App: React.FC = () => {
 
   // New Client Form State
   const [newShopName, setNewShopName] = useState('');
+  const [newOwnerName, setNewOwnerName] = useState('');
   const [newLocation, setNewLocation] = useState('');
   const [phoneNumber, setPhoneNumber] = useState('');
   const [phoneError, setPhoneError] = useState('');
   const [isInstitution, setIsInstitution] = useState(false);
   const [emailId, setEmailId] = useState('');
+  const [onboardBw, setOnboardBw] = useState(1.5);
+  const [onboardDouble, setOnboardDouble] = useState(2.0);
+  const [onboardColor, setOnboardColor] = useState(10.0);
+  const [onboardA4, setOnboardA4] = useState(1.0);
 
   // Delete Client State
   const [clientToDelete, setClientToDelete] = useState<string | null>(null);
@@ -332,15 +342,22 @@ const App: React.FC = () => {
 
   // Shop Settings State
   const defaultPrices: PrintPrices = {
-    singleSide: { bw: 0, color: 0 },
-    doubleSide: { bw: 0, color: 0 },
-    twoInOne: { bw: 0, color: 0 }
+    singleSide: { bw: 1.5, color: 10 },
+    doubleSide: { bw: 2.0, color: 18 },
+    twoInOne: { bw: 1.5, color: 10 }
   };
   const [showShopSettingsModal, setShowShopSettingsModal] = useState(false);
   const [printingPrices, setPrintingPrices] = useState<PrintPrices>(defaultPrices);
-  const [showPricingDetails, setShowPricingDetails] = useState(false);
+  const [vendorPricing, setVendorPricing] = useState<VendorPricing>({
+    bw: 1.5,
+    doubleSided: 2.0,
+    color: 10.0,
+    a4Sheet: 1.0,
+  });
+  const [showPricingDetails, setShowPricingDetails] = useState(true);
   const [shopInfo, setShopInfo] = useState('');
   const [customWebsiteName, setCustomWebsiteName] = useState('');
+  const [copiedStoreUrl, setCopiedStoreUrl] = useState(false);
 
 
   // Extract all reports for the global "Reports & Help" view
@@ -416,8 +433,76 @@ const App: React.FC = () => {
   // Unified data for the selected client (merges collection and nested data)
   const selectedClientTransactions = useMemo(() => {
     if (!selectedClient) return [];
-    return allTransactions.filter(tx => tx.clientId === selectedClient.id);
+    const slug = selectedClient.slug || selectedClient.id;
+    return allTransactions.filter(
+      tx => tx.clientId === selectedClient.id || tx.clientId === slug || tx.shopName === selectedClient.shopName
+    );
   }, [selectedClient, allTransactions]);
+
+  // Daily Stats calculation for the selected shop
+  const selectedShopDailyStats = useMemo(() => {
+    if (!selectedClient) return null;
+    const slug = selectedClient.slug || selectedClient.id;
+
+    const isTodayDate = (dateStr: string) => {
+      if (!dateStr) return false;
+      const d = new Date(dateStr);
+      const now = new Date();
+      return (
+        d.getDate() === now.getDate() &&
+        d.getMonth() === now.getMonth() &&
+        d.getFullYear() === now.getFullYear()
+      );
+    };
+
+    // Filter raw orders for this shop
+    const shopOrders = allOrders.filter((order) => {
+      const isThisShop =
+        order.vendorSlug === slug ||
+        order.vendorSlug === selectedClient.id ||
+        order.clientId === selectedClient.id ||
+        order.shopName === selectedClient.shopName ||
+        order.storeName === selectedClient.shopName;
+      const isPaid = order.payment_status === "PAID" || order.paymentStatus === "Paid";
+      return isThisShop && isPaid;
+    });
+
+    const todayOrders = shopOrders.filter((o) =>
+      isTodayDate(o.createdAt || o.paid_at || o.timestamp)
+    );
+
+    const todayRevenue = todayOrders.reduce((sum, o) => sum + (Number(o.amount) || Number(o.cost) || 0), 0);
+    const todayPages = todayOrders.reduce((sum, o) => {
+      const p = Number(o.totalPages || o.pages || 0);
+      const c = Number(o.copies || 1);
+      return sum + (p * c);
+    }, 0);
+    const todayVendorPayout = todayOrders.reduce((sum, o) => {
+      const v = typeof o.vendorAmount === "number" ? o.vendorAmount : (typeof o.subtotal === "number" ? o.subtotal : (Number(o.amount) || 0) * 0.92);
+      return sum + v;
+    }, 0);
+
+    const allTimeRevenue = shopOrders.reduce((sum, o) => sum + (Number(o.amount) || Number(o.cost) || 0), 0);
+    const allTimePages = shopOrders.reduce((sum, o) => {
+      const p = Number(o.totalPages || o.pages || 0);
+      const c = Number(o.copies || 1);
+      return sum + (p * c);
+    }, 0);
+
+    return {
+      today: {
+        revenue: todayRevenue,
+        pages: todayPages,
+        vendorPayout: todayVendorPayout,
+        orderCount: todayOrders.length,
+      },
+      allTime: {
+        revenue: allTimeRevenue,
+        pages: allTimePages,
+        orderCount: shopOrders.length,
+      }
+    };
+  }, [selectedClient, allOrders]);
 
   const selectedClientReports = useMemo(() => {
     if (!selectedClient) return [];
@@ -561,35 +646,83 @@ const App: React.FC = () => {
       return;
     }
 
-    const newClient = {
+    // Generate URL-friendly slug
+    const cleanSlug = newShopName
+      .toLowerCase()
+      .trim()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/(^-|-$)/g, '') || `shop-${Date.now().toString(36)}`;
+
+    const pricingObj: VendorPricing = {
+      bw: parseFloat(String(onboardBw)) || 1.5,
+      doubleSided: parseFloat(String(onboardDouble)) || 2.0,
+      color: parseFloat(String(onboardColor)) || 10.0,
+      a4Sheet: parseFloat(String(onboardA4)) || 1.0,
+    };
+
+    const newClientData: any = {
+      id: cleanSlug,
+      slug: cleanSlug,
       shopName: newShopName,
+      storeName: newShopName,
+      ownerName: newOwnerName || newShopName,
       location: newLocation,
+      address: newLocation,
       deviceId: `40${Math.floor(Math.random() * 900) + 100}-${Math.random().toString(36).substr(2, 8)}`,
       planType: 'Monthly',
       status: 'active',
+      isActive: true,
+      themeColor: '#000000',
       lastActive: 'Just now',
       iconType: 'storefront',
       history: [],
       reports: [],
       printers: [],
       phoneNumber: phoneNumber,
-      ...(isInstitution && emailId ? { email: emailId } : {})
+      phone: phoneNumber,
+      ...(isInstitution && emailId ? { email: emailId } : {}),
+      pricing: pricingObj,
+      printingPrices: {
+        singleSide: { bw: pricingObj.bw, color: pricingObj.color },
+        doubleSide: { bw: pricingObj.doubleSided, color: pricingObj.color * 1.8 },
+        twoInOne: { bw: pricingObj.bw, color: pricingObj.color }
+      }
     };
 
     try {
-      await addDoc(collection(db, 'clients'), newClient);
+      // 1. Write to clients collection in Firestore
+      await setDoc(doc(db, 'clients', cleanSlug), newClientData);
+
+      // 2. Write to vendors collection so customer website immediately recognizes the shop
+      await setDoc(doc(db, 'vendors', cleanSlug), {
+        slug: cleanSlug,
+        storeName: newShopName,
+        ownerName: newOwnerName || newShopName,
+        phone: phoneNumber,
+        email: emailId || '',
+        address: newLocation,
+        themeColor: '#000000',
+        isActive: true,
+        createdAt: new Date().toISOString(),
+        pricing: pricingObj
+      });
     } catch (err) {
-      console.error('Error adding client:', err);
+      console.error('Error adding client / vendor:', err);
     }
 
     setShowOnboardModal(false);
     // Reset form
     setNewShopName('');
+    setNewOwnerName('');
     setNewLocation('');
     setPhoneNumber('');
     setPhoneError('');
     setIsInstitution(false);
     setEmailId('');
+    setOnboardBw(1.5);
+    setOnboardDouble(2.0);
+    setOnboardColor(10.0);
+    setOnboardA4(1.0);
   };
 
   const handleDeleteClient = (clientId: string) => {
@@ -661,8 +794,15 @@ const App: React.FC = () => {
   };
 
   const handleOpenShopSettings = () => {
+    const currentPricing = selectedClient?.pricing || {
+      bw: selectedClient?.printingPrices?.singleSide?.bw || 1.5,
+      doubleSided: selectedClient?.printingPrices?.doubleSide?.bw || 2.0,
+      color: selectedClient?.printingPrices?.singleSide?.color || 10.0,
+      a4Sheet: 1.0,
+    };
+    setVendorPricing(currentPricing);
     setPrintingPrices(selectedClient?.printingPrices || defaultPrices);
-    setShowPricingDetails(false);
+    setShowPricingDetails(true);
     setShopInfo(selectedClient?.shopInfo || '');
     setCustomWebsiteName(selectedClient?.customWebsiteName || selectedClient?.shopName || '');
     setShowShopSettingsModal(true);
@@ -673,17 +813,60 @@ const App: React.FC = () => {
     if (!selectedClient) return;
 
     try {
+      const slug = selectedClient.slug || selectedClient.id;
       const payload: Partial<Client> = {
-        printingPrices: printingPrices,
+        pricing: vendorPricing,
+        printingPrices: {
+          singleSide: { bw: vendorPricing.bw, color: vendorPricing.color },
+          doubleSide: { bw: vendorPricing.doubleSided, color: vendorPricing.color * 1.8 },
+          twoInOne: { bw: vendorPricing.bw, color: vendorPricing.color }
+        },
         shopInfo: shopInfo,
-        customWebsiteName: customWebsiteName
+        customWebsiteName: customWebsiteName,
+        storeName: customWebsiteName || selectedClient.shopName
       };
 
+      // Update clients collection
       await updateDoc(doc(db, 'clients', selectedClient.id), payload);
+
+      // Sync to vendors collection for print website
+      await setDoc(doc(db, 'vendors', slug), {
+        slug,
+        storeName: customWebsiteName || selectedClient.shopName,
+        ownerName: selectedClient.ownerName || selectedClient.shopName,
+        phone: selectedClient.phoneNumber || selectedClient.phone || '',
+        email: selectedClient.email || '',
+        address: selectedClient.location || selectedClient.address || '',
+        themeColor: selectedClient.themeColor || '#000000',
+        isActive: true,
+        pricing: vendorPricing
+      }, { merge: true });
+
       setShowShopSettingsModal(false);
     } catch (err) {
       console.error('Error saving shop settings:', err);
     }
+  };
+
+  const handleDownloadQR = () => {
+    const canvas = document.getElementById('shop-qr-canvas') as HTMLCanvasElement;
+    if (!canvas) return;
+    const pngUrl = canvas.toDataURL('image/png');
+    const downloadLink = document.createElement('a');
+    downloadLink.href = pngUrl;
+    downloadLink.download = `PrintEG_Store_QR_${(selectedClient?.shopName || 'shop').replace(/\s+/g, '_')}.png`;
+    document.body.appendChild(downloadLink);
+    downloadLink.click();
+    document.body.removeChild(downloadLink);
+  };
+
+  const handleCopyStoreUrl = () => {
+    if (!selectedClient) return;
+    const slug = selectedClient.slug || selectedClient.id;
+    const url = `https://printeg.in/store/${slug}`;
+    navigator.clipboard.writeText(url);
+    setCopiedStoreUrl(true);
+    setTimeout(() => setCopiedStoreUrl(false), 2000);
   };
 
   const handleAddPrinter = async (e: React.FormEvent) => {
@@ -834,53 +1017,66 @@ const App: React.FC = () => {
                     onClick={() => setShowPricingDetails(!showPricingDetails)}
                     className="w-full flex justify-between items-center bg-slate-50 border border-slate-200 px-4 py-3 rounded-xl font-bold text-slate-700 hover:bg-slate-100 transition-colors"
                   >
-                    Configure Xerox Prices
+                    Configure Store Pricing
                     <ChevronDown size={18} className={`transform transition-transform ${showPricingDetails ? 'rotate-180' : ''}`} />
                   </button>
 
                   {showPricingDetails && (
                     <div className="mt-3 p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-4 animate-in fade-in zoom-in-95 duration-200">
-                      {/* Single Side */}
+                      {/* B&W Single & Double */}
                       <div>
-                        <label className="block text-[11px] font-bold text-slate-400 uppercase mb-2">Single Side</label>
+                        <label className="block text-[11px] font-bold text-slate-400 uppercase mb-2">Black & White (Xerox)</label>
                         <div className="flex gap-3">
                           <div className="flex-1">
-                            <span className="text-[10px] text-slate-500 mb-1 block">B&W (₹)</span>
-                            <input type="number" min="0" step="0.5" className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg outline-none text-sm focus:ring-2 focus:ring-black" value={printingPrices.singleSide.bw} onChange={(e) => setPrintingPrices({ ...printingPrices, singleSide: { ...printingPrices.singleSide, bw: parseFloat(e.target.value) || 0 } })} />
+                            <span className="text-[10px] text-slate-500 mb-1 block">Single Side (₹)</span>
+                            <input
+                              type="number"
+                              min="0"
+                              step="0.5"
+                              className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg outline-none text-sm focus:ring-2 focus:ring-black font-semibold"
+                              value={vendorPricing.bw}
+                              onChange={(e) => setVendorPricing({ ...vendorPricing, bw: parseFloat(e.target.value) || 0 })}
+                            />
                           </div>
                           <div className="flex-1">
-                            <span className="text-[10px] text-slate-500 mb-1 block">Color (₹)</span>
-                            <input type="number" min="0" step="0.5" className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg outline-none text-sm focus:ring-2 focus:ring-black" value={printingPrices.singleSide.color} onChange={(e) => setPrintingPrices({ ...printingPrices, singleSide: { ...printingPrices.singleSide, color: parseFloat(e.target.value) || 0 } })} />
+                            <span className="text-[10px] text-slate-500 mb-1 block">Double Sided (₹)</span>
+                            <input
+                              type="number"
+                              min="0"
+                              step="0.5"
+                              className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg outline-none text-sm focus:ring-2 focus:ring-black font-semibold"
+                              value={vendorPricing.doubleSided}
+                              onChange={(e) => setVendorPricing({ ...vendorPricing, doubleSided: parseFloat(e.target.value) || 0 })}
+                            />
                           </div>
                         </div>
                       </div>
 
-                      {/* Double Side */}
+                      {/* Color & Blank A4 Sheets */}
                       <div>
-                        <label className="block text-[11px] font-bold text-slate-400 uppercase mb-2">Double Side</label>
+                        <label className="block text-[11px] font-bold text-slate-400 uppercase mb-2">Color & Paper Sheets</label>
                         <div className="flex gap-3">
                           <div className="flex-1">
-                            <span className="text-[10px] text-slate-500 mb-1 block">B&W (₹)</span>
-                            <input type="number" min="0" step="0.5" className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg outline-none text-sm focus:ring-2 focus:ring-black" value={printingPrices.doubleSide.bw} onChange={(e) => setPrintingPrices({ ...printingPrices, doubleSide: { ...printingPrices.doubleSide, bw: parseFloat(e.target.value) || 0 } })} />
+                            <span className="text-[10px] text-slate-500 mb-1 block">Color Print (₹)</span>
+                            <input
+                              type="number"
+                              min="0"
+                              step="0.5"
+                              className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg outline-none text-sm focus:ring-2 focus:ring-black font-semibold"
+                              value={vendorPricing.color}
+                              onChange={(e) => setVendorPricing({ ...vendorPricing, color: parseFloat(e.target.value) || 0 })}
+                            />
                           </div>
                           <div className="flex-1">
-                            <span className="text-[10px] text-slate-500 mb-1 block">Color (₹)</span>
-                            <input type="number" min="0" step="0.5" className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg outline-none text-sm focus:ring-2 focus:ring-black" value={printingPrices.doubleSide.color} onChange={(e) => setPrintingPrices({ ...printingPrices, doubleSide: { ...printingPrices.doubleSide, color: parseFloat(e.target.value) || 0 } })} />
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Two in One */}
-                      <div>
-                        <label className="block text-[11px] font-bold text-slate-400 uppercase mb-2">Two In One</label>
-                        <div className="flex gap-3">
-                          <div className="flex-1">
-                            <span className="text-[10px] text-slate-500 mb-1 block">B&W (₹)</span>
-                            <input type="number" min="0" step="0.5" className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg outline-none text-sm focus:ring-2 focus:ring-black" value={printingPrices.twoInOne.bw} onChange={(e) => setPrintingPrices({ ...printingPrices, twoInOne: { ...printingPrices.twoInOne, bw: parseFloat(e.target.value) || 0 } })} />
-                          </div>
-                          <div className="flex-1">
-                            <span className="text-[10px] text-slate-500 mb-1 block">Color (₹)</span>
-                            <input type="number" min="0" step="0.5" className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg outline-none text-sm focus:ring-2 focus:ring-black" value={printingPrices.twoInOne.color} onChange={(e) => setPrintingPrices({ ...printingPrices, twoInOne: { ...printingPrices.twoInOne, color: parseFloat(e.target.value) || 0 } })} />
+                            <span className="text-[10px] text-slate-500 mb-1 block">Blank A4 Sheet (₹)</span>
+                            <input
+                              type="number"
+                              min="0"
+                              step="0.5"
+                              className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg outline-none text-sm focus:ring-2 focus:ring-black font-semibold"
+                              value={vendorPricing.a4Sheet}
+                              onChange={(e) => setVendorPricing({ ...vendorPricing, a4Sheet: parseFloat(e.target.value) || 0 })}
+                            />
                           </div>
                         </div>
                       </div>
@@ -889,24 +1085,24 @@ const App: React.FC = () => {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-bold text-slate-400 uppercase mb-2">Custom Website Name</label>
+                  <label className="block text-xs font-bold text-slate-400 uppercase mb-2">Custom Store Name</label>
                   <input
                     className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all"
-                    placeholder="e.g. Printeg - Metro Hub"
+                    placeholder="e.g. Metro Print Hub"
                     value={customWebsiteName}
                     onChange={(e) => setCustomWebsiteName(e.target.value)}
                   />
-                  <p className="text-[10px] text-slate-400 mt-1">This will display as the shop's name on the customer portal.</p>
+                  <p className="text-[10px] text-slate-400 mt-1">This will display as the store&apos;s title on the customer portal.</p>
                 </div>
 
                 <div>
-                  <label className="block text-xs font-bold text-slate-400 uppercase mb-2">Shop Information</label>
+                  <label className="block text-xs font-bold text-slate-400 uppercase mb-2">Shop Information / Address</label>
                   <textarea
-                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all min-h-[100px] resize-none"
-                    placeholder="e.g. Hours of operation, exact landmarks..."
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all min-h-[80px] resize-none"
+                    placeholder="e.g. Near Reception, Open 9AM - 8PM..."
                     value={shopInfo}
                     onChange={(e) => setShopInfo(e.target.value)}
-                    rows={4}
+                    rows={3}
                   />
                 </div>
 
@@ -927,18 +1123,53 @@ const App: React.FC = () => {
                 </div>
               </form>
 
-              <div className="w-full md:w-64 flex flex-col items-center justify-center p-6 bg-slate-50 rounded-2xl border border-slate-200">
-                <div className="w-full aspect-square bg-white border border-slate-200 rounded-2xl flex items-center justify-center p-4 shadow-sm mb-4">
+              {/* QR Code Standee Generator */}
+              <div className="w-full md:w-72 flex flex-col items-center justify-between p-6 bg-slate-50 rounded-2xl border border-slate-200 space-y-4">
+                <div className="w-full text-center">
+                  <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
+                    Store Standee QR
+                  </span>
+                  <p className="text-xs font-bold text-slate-900 truncate">
+                    {selectedClient.shopName}
+                  </p>
+                </div>
+
+                <div className="bg-white border-2 border-dashed border-slate-300 rounded-2xl p-4 shadow-sm">
                   <QRCodeCanvas
-                    value={`https://printeg.online/shop/${selectedClient.id}?name=${encodeURIComponent(customWebsiteName || selectedClient.shopName)}`}
-                    size={160}
+                    id="shop-qr-canvas"
+                    value={`https://printeg.in/store/${selectedClient.slug || selectedClient.id}`}
+                    size={170}
                     level="H"
-                    includeMargin={false}
+                    includeMargin={true}
                   />
                 </div>
-                <div className="text-center">
-                  <h4 className="font-bold text-sm text-slate-900 mb-1 flex items-center justify-center gap-1"><QrCode size={14} /> Scan to Connect</h4>
-                  <p className="text-[10px] text-slate-500">Customers can scan this to access the shop portal directly.</p>
+
+                <div className="w-full space-y-2">
+                  <button
+                    type="button"
+                    onClick={handleDownloadQR}
+                    className="w-full py-2.5 bg-black text-white rounded-xl text-xs font-bold hover:bg-slate-800 transition-all flex items-center justify-center gap-2 shadow-md shadow-black/10"
+                  >
+                    <Download size={14} /> Download QR PNG
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleCopyStoreUrl}
+                    className="w-full py-2 bg-white border border-slate-200 text-slate-700 rounded-xl text-xs font-bold hover:bg-slate-100 transition-all flex items-center justify-center gap-1.5"
+                  >
+                    {copiedStoreUrl ? (
+                      <>
+                        <Check size={14} className="text-emerald-600" />
+                        <span className="text-emerald-600">Link Copied!</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy size={14} className="text-slate-500" />
+                        <span>Copy Store Link</span>
+                      </>
+                    )}
+                  </button>
                 </div>
               </div>
             </div>
@@ -1150,12 +1381,12 @@ const App: React.FC = () => {
         showOnboardModal && (
           <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
             <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowOnboardModal(false)} />
-            <div className="relative bg-white w-full max-w-md rounded-3xl p-8 shadow-2xl">
+            <div className="relative bg-white w-full max-w-lg rounded-3xl p-8 shadow-2xl overflow-y-auto max-h-[90vh]">
               <button onClick={() => setShowOnboardModal(false)} className="absolute top-6 right-6 text-slate-400 hover:text-black">
                 <X size={24} />
               </button>
               <h3 className="text-2xl font-display font-bold mb-2">Onboard New Shop</h3>
-              <p className="text-slate-500 mb-6">Register a new IoT printer node.</p>
+              <p className="text-slate-500 mb-6">Register a new shop and set custom print pricing.</p>
 
               <form onSubmit={handleOnboard} className="space-y-4">
                 <div>
@@ -1163,18 +1394,28 @@ const App: React.FC = () => {
                   <input
                     required
                     className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all"
-                    placeholder="e.g. Metro Print Hub"
+                    placeholder="e.g. Royal Xerox & Prints"
                     value={newShopName}
                     onChange={(e) => setNewShopName(e.target.value)}
                   />
                 </div>
 
                 <div>
-                  <label className="block text-xs font-bold text-slate-400 uppercase mb-2">Location *</label>
+                  <label className="block text-xs font-bold text-slate-400 uppercase mb-2">Owner / Contact Name</label>
+                  <input
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all"
+                    placeholder="e.g. Sarath Kumar"
+                    value={newOwnerName}
+                    onChange={(e) => setNewOwnerName(e.target.value)}
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-400 uppercase mb-2">Location / Address *</label>
                   <input
                     required
                     className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all"
-                    placeholder="e.g. Bangalore, KA"
+                    placeholder="e.g. Opposite College Gate, Chennai"
                     value={newLocation}
                     onChange={(e) => setNewLocation(e.target.value)}
                   />
@@ -1198,6 +1439,63 @@ const App: React.FC = () => {
                       <AlertCircle size={12} /> {phoneError}
                     </p>
                   )}
+                </div>
+
+                {/* Pricing Fields */}
+                <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 space-y-3">
+                  <span className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
+                    Store Print & Xerox Pricing
+                  </span>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <span className="text-[10px] text-slate-500 font-semibold mb-1 block">B&W Xerox (₹)</span>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.5"
+                        className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-black"
+                        value={onboardBw}
+                        onChange={(e) => setOnboardBw(parseFloat(e.target.value) || 0)}
+                      />
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-slate-500 font-semibold mb-1 block">Double Sided (₹)</span>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.5"
+                        className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-black"
+                        value={onboardDouble}
+                        onChange={(e) => setOnboardDouble(parseFloat(e.target.value) || 0)}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <span className="text-[10px] text-slate-500 font-semibold mb-1 block">Color Print (₹)</span>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.5"
+                        className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-black"
+                        value={onboardColor}
+                        onChange={(e) => setOnboardColor(parseFloat(e.target.value) || 0)}
+                      />
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-slate-500 font-semibold mb-1 block">Blank A4 Sheet (₹)</span>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.5"
+                        className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-black"
+                        value={onboardA4}
+                        onChange={(e) => setOnboardA4(parseFloat(e.target.value) || 0)}
+                      />
+                    </div>
+                  </div>
                 </div>
 
                 <div>
@@ -1226,7 +1524,9 @@ const App: React.FC = () => {
                   </div>
                 )}
 
-                <button type="submit" className="w-full bg-black text-white py-4 rounded-xl font-bold hover:bg-slate-800 transition-all mt-6 shadow-lg">Complete Registration</button>
+                <button type="submit" className="w-full bg-black text-white py-4 rounded-xl font-bold hover:bg-slate-800 transition-all mt-4 shadow-lg shadow-black/10">
+                  Onboard & Generate QR
+                </button>
               </form>
             </div>
           </div>
@@ -1319,10 +1619,74 @@ const App: React.FC = () => {
             const pendingMergedReports = mergedReports.filter(r => r.status === 'pending');
 
             return (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 mb-10">
-                <StatCard label="Total Prints" value={selectedClient ? (selectedClient.history?.reduce((acc, curr) => acc + curr.pages, 0) || 0).toString() : totalPrints.toLocaleString()} icon={<Printer size={16} />} iconBg="bg-blue-50" iconColor="text-blue-600" />
-                <StatCard label={selectedClient ? "Deployed Units" : "Deployed Units (Printers)"} value={selectedClient ? mergedPrinters.length.toString() : totalPrinters.toString()} icon={<LayoutGrid size={16} />} iconBg="bg-emerald-50" iconColor="text-emerald-600" />
-                <StatCard label={selectedClient ? "Tickets" : "Open Reports"} value={selectedClient ? pendingMergedReports.length.toString() : pendingReportsCount.toString()} icon={<MessageSquare size={16} />} iconBg="bg-amber-50" iconColor="text-amber-600" highlight={selectedClient ? pendingMergedReports.length > 0 : pendingReportsCount > 0} />
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-10">
+                {selectedClient ? (
+                  <>
+                    <StatCard
+                      label="Today's Total Amount"
+                      value={`₹${(selectedShopDailyStats?.today.revenue || 0).toFixed(2)}`}
+                      subValue={`Payout: ₹${(selectedShopDailyStats?.today.vendorPayout || 0).toFixed(2)}`}
+                      icon={<Receipt size={18} />}
+                      iconBg="bg-emerald-50"
+                      iconColor="text-emerald-600"
+                    />
+                    <StatCard
+                      label="Today's Prints"
+                      value={`${(selectedShopDailyStats?.today.pages || 0).toLocaleString()} pgs`}
+                      subValue={`${selectedShopDailyStats?.today.orderCount || 0} orders today`}
+                      icon={<Printer size={18} />}
+                      iconBg="bg-blue-50"
+                      iconColor="text-blue-600"
+                    />
+                    <StatCard
+                      label="All-Time Revenue"
+                      value={`₹${(selectedShopDailyStats?.allTime.revenue || 0).toFixed(2)}`}
+                      subValue={`${(selectedShopDailyStats?.allTime.pages || 0).toLocaleString()} total pgs`}
+                      icon={<TrendingUp size={18} />}
+                      iconBg="bg-purple-50"
+                      iconColor="text-purple-600"
+                    />
+                    <StatCard
+                      label="Deployed Printers"
+                      value={mergedPrinters.length.toString()}
+                      icon={<LayoutGrid size={18} />}
+                      iconBg="bg-slate-100"
+                      iconColor="text-slate-700"
+                    />
+                  </>
+                ) : (
+                  <>
+                    <StatCard
+                      label="Total Prints"
+                      value={totalPrints.toLocaleString()}
+                      icon={<Printer size={18} />}
+                      iconBg="bg-blue-50"
+                      iconColor="text-blue-600"
+                    />
+                    <StatCard
+                      label="Deployed Units"
+                      value={totalPrinters.toString()}
+                      icon={<LayoutGrid size={18} />}
+                      iconBg="bg-emerald-50"
+                      iconColor="text-emerald-600"
+                    />
+                    <StatCard
+                      label="Open Reports"
+                      value={pendingReportsCount.toString()}
+                      icon={<MessageSquare size={18} />}
+                      iconBg="bg-amber-50"
+                      iconColor="text-amber-600"
+                      highlight={pendingReportsCount > 0}
+                    />
+                    <StatCard
+                      label="Total Revenue"
+                      value={`₹${totalRevenue}`}
+                      icon={<Receipt size={18} />}
+                      iconBg="bg-purple-50"
+                      iconColor="text-purple-600"
+                    />
+                  </>
+                )}
               </div>
             );
           })()}
