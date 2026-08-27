@@ -45,6 +45,12 @@ export interface VendorPricing {
   a4Sheet: number;     // Blank A4 Sheet
 }
 
+export interface MerchantCredentials {
+  username: string;
+  password: string;
+  createdAt?: string;
+}
+
 export interface Client {
   id: string;
   slug?: string;
@@ -66,6 +72,7 @@ export interface Client {
   phoneNumber?: string;
   phone?: string;
   email?: string;
+  merchantCredentials?: MerchantCredentials;
   pricing?: VendorPricing;
   printingPrices?: PrintPrices;
   shopInfo?: string;

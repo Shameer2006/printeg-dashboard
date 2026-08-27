@@ -34,9 +34,19 @@ interface SidebarProps {
   activeView: 'dashboard' | 'customers' | 'reports' | 'transactions';
   setActiveView: (view: 'dashboard' | 'customers' | 'reports' | 'transactions') => void;
   onSignOut?: () => void;
+  userRole?: 'admin' | 'merchant';
+  merchantName?: string;
+  merchantUsername?: string;
 }
 
-export const Sidebar: React.FC<SidebarProps> = ({ activeView, setActiveView, onSignOut }) => {
+export const Sidebar: React.FC<SidebarProps> = ({
+  activeView,
+  setActiveView,
+  onSignOut,
+  userRole = 'admin',
+  merchantName,
+  merchantUsername,
+}) => {
   const [showSignOutConfirm, setShowSignOutConfirm] = React.useState(false);
 
   const handleSignOutClick = () => {
@@ -54,50 +64,75 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeView, setActiveView, onS
     setShowSignOutConfirm(false);
   };
 
+  const isMerchant = userRole === 'merchant';
+
   return (
     <>
       <aside className="w-64 border-r border-slate-200 bg-white flex flex-col h-screen sticky top-0">
         <div className="p-6">
-          <div className="flex flex-col items-center text-center mb-10">
+          <div className="flex flex-col items-center text-center mb-8">
             <div className="w-12 h-12 bg-black flex items-center justify-center rounded-xl shadow-lg mb-3">
-              <span className="text-white font-display font-bold text-2xl">P</span>
+              <span className="text-white font-display font-bold text-2xl">
+                {isMerchant && merchantName ? merchantName.charAt(0).toUpperCase() : 'P'}
+              </span>
             </div>
             <div>
-              <h1 className="font-display font-bold text-2xl leading-tight text-slate-900">PrintEG</h1>
-              <p className="text-[12px] text-slate-600 font-medium mt-1">Print. Easy. Go</p>
+              <h1 className="font-display font-bold text-xl leading-tight text-slate-900 truncate max-w-[200px]">
+                {isMerchant && merchantName ? merchantName : 'PrintEG'}
+              </h1>
+              <p className="text-[12px] text-slate-600 font-medium mt-1">
+                {isMerchant ? 'Merchant Portal' : 'Print. Easy. Go'}
+              </p>
             </div>
           </div>
 
           <nav className="space-y-1">
-            <SidebarItem
-              icon={<LayoutGrid size={20} />}
-              label="Dashboard Overview"
-              active={activeView === 'dashboard'}
-              onClick={() => setActiveView('dashboard')}
-            />
-            <SidebarItem
-              icon={<Users size={20} />}
-              label="Customers"
-              active={activeView === 'customers'}
-              onClick={() => setActiveView('customers')}
-            />
-            <SidebarItem
-              icon={<MessageSquare size={20} />}
-              label="Reports & Help"
-              active={activeView === 'reports'}
-              onClick={() => setActiveView('reports')}
-            />
+            {isMerchant ? (
+              <>
+                <SidebarItem
+                  icon={<LayoutGrid size={20} />}
+                  label="Live Orders & Stats"
+                  active={true}
+                  onClick={() => {}}
+                />
+              </>
+            ) : (
+              <>
+                <SidebarItem
+                  icon={<LayoutGrid size={20} />}
+                  label="Dashboard Overview"
+                  active={activeView === 'dashboard'}
+                  onClick={() => setActiveView('dashboard')}
+                />
+                <SidebarItem
+                  icon={<Users size={20} />}
+                  label="Customers"
+                  active={activeView === 'customers'}
+                  onClick={() => setActiveView('customers')}
+                />
+                <SidebarItem
+                  icon={<MessageSquare size={20} />}
+                  label="Reports & Help"
+                  active={activeView === 'reports'}
+                  onClick={() => setActiveView('reports')}
+                />
+              </>
+            )}
           </nav>
         </div>
 
         <div className="mt-auto p-6 border-t border-slate-100">
           <div className="flex items-center gap-3 mb-6 p-2">
             <div className="w-9 h-9 rounded-full bg-slate-200 flex items-center justify-center text-xs font-bold text-slate-700">
-              PE
+              {isMerchant && merchantName ? merchantName.slice(0, 2).toUpperCase() : 'PE'}
             </div>
             <div className="overflow-hidden">
-              <p className="text-sm font-semibold text-slate-900 truncate">PrintEG</p>
-              <p className="text-[11px] text-slate-500 truncate">Admin Access</p>
+              <p className="text-sm font-semibold text-slate-900 truncate">
+                {isMerchant ? (merchantUsername ? `@${merchantUsername}` : merchantName) : 'PrintEG Master'}
+              </p>
+              <p className="text-[11px] text-slate-500 truncate">
+                {isMerchant ? 'Shop Owner' : 'Admin Access'}
+              </p>
             </div>
           </div>
           <button

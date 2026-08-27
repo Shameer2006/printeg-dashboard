@@ -54,7 +54,10 @@ const ITEMS_PER_PAGE = 5;
  * LOGIN PAGE COMPONENT
  * Defined outside App to ensure it is stable and doesn't remount on App state changes.
  */
-const LoginPage: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
+const LoginPage: React.FC<{
+  onLogin: (role: 'admin' | 'merchant', merchant?: Client) => void;
+  clients: Client[];
+}> = ({ onLogin, clients }) => {
   const [userId, setUserId] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -72,17 +75,42 @@ const LoginPage: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
     setError('');
     setIsLoading(true);
 
-    // Simulated Auth logic with requested credentials
-    // User ID: printeg.online
-    // Password: printeg
     setTimeout(() => {
-      if (userId.trim() === 'printeg.online' && password === 'printeg') {
-        onLogin();
-      } else {
-        setError('Invalid credentials. Hint: printeg.online / printeg');
+      const cleanUser = userId.trim().toLowerCase();
+      const cleanPass = password.trim();
+
+      // 1. Super Admin Authentication Check
+      if (cleanUser === 'printeg.online' && cleanPass === 'printeg') {
         setIsLoading(false);
+        onLogin('admin');
+        return;
       }
-    }, 600);
+
+      // 2. Merchant Authentication Check
+      const matchedClient = clients.find(c => {
+        const creds = c.merchantCredentials;
+        if (!creds) {
+          // Fallback if no credentials explicitly saved: check slug/id with password "printeg" or shop phone
+          const matchesSlug = (c.slug || c.id || '').toLowerCase() === cleanUser;
+          return matchesSlug && (cleanPass === 'printeg' || cleanPass === (c.phoneNumber || c.phone || ''));
+        }
+        const matchesUsername =
+          (creds.username || '').trim().toLowerCase() === cleanUser ||
+          (c.slug || '').trim().toLowerCase() === cleanUser ||
+          (c.id || '').trim().toLowerCase() === cleanUser ||
+          (c.phoneNumber || c.phone || '').trim() === cleanUser;
+        return matchesUsername && (creds.password || '').trim() === cleanPass;
+      });
+
+      if (matchedClient) {
+        setIsLoading(false);
+        onLogin('merchant', matchedClient);
+        return;
+      }
+
+      setError('Invalid User ID or Password. For Super Admin use printeg.online, or enter your shop\'s Merchant User ID & Password.');
+      setIsLoading(false);
+    }, 500);
   };
 
   const handleRecovery = (e: React.FormEvent) => {
@@ -90,12 +118,10 @@ const LoginPage: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
     setError('');
     setIsLoading(true);
 
-    // Mock Recovery Logic
     setTimeout(() => {
       if (recoveryEmail && recoveryPhone) {
         setRecoveryStatus('success');
         setIsLoading(false);
-        // Reset after 3 seconds to login
         setTimeout(() => {
           setIsRecovering(false);
           setRecoveryStatus('idle');
@@ -112,16 +138,20 @@ const LoginPage: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
   return (
     <div className="min-h-screen flex items-center justify-center technical-grid p-6 relative z-10">
       <div className="w-full max-w-md animate-in fade-in slide-in-from-bottom-4 duration-700">
-        <div className="flex flex-col items-center text-center mb-10">
-          <div className="w-16 h-16 bg-black flex items-center justify-center rounded-2xl shadow-2xl mb-6">
+        <div className="flex flex-col items-center text-center mb-8">
+          <div className="w-16 h-16 bg-black flex items-center justify-center rounded-2xl shadow-2xl mb-4">
             <span className="text-white font-display font-bold text-3xl">P</span>
           </div>
-          <h1 className="font-display font-bold text-3xl text-slate-900 tracking-tight">PrintEG</h1>
-          <p className="text-slate-500 font-medium mt-2">Print. Easy. Go</p>
+          <h1 className="font-display font-bold text-3xl text-slate-900 tracking-tight">PrintEG Portal</h1>
+          <p className="text-slate-500 font-medium mt-1">Admin Console & Merchant Store Desk</p>
         </div>
 
-        <div className="bg-white border border-slate-200 rounded-[2.5rem] p-10 shadow-2xl shadow-slate-200/50">
-          <h2 className="text-xl font-bold text-slate-900 mb-8">{isRecovering ? 'Account Recovery' : 'Admin Console Login'}</h2>
+        <div className="bg-white border border-slate-200 rounded-[2.5rem] p-8 sm:p-10 shadow-2xl shadow-slate-200/50">
+          <div className="flex items-center justify-between mb-6">
+            <h2 className="text-xl font-bold text-slate-900">
+              {isRecovering ? 'Account Recovery' : 'Sign In'}
+            </h2>
+          </div>
 
           {/* SUCCESS MESSAGE */}
           {recoveryStatus === 'success' ? (
@@ -140,10 +170,10 @@ const LoginPage: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
             <>
               {!isRecovering ? (
                 /* LOGIN FORM */
-                <form onSubmit={handleSubmit} className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-300">
+                <form onSubmit={handleSubmit} className="space-y-5 animate-in fade-in slide-in-from-right-4 duration-300">
                   <div>
                     <label htmlFor="userId" className="block text-[11px] font-bold text-slate-400 uppercase tracking-widest mb-2">
-                      User ID
+                      User ID / Merchant Username
                     </label>
                     <div className="relative">
                       <UserIcon className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={18} />
@@ -151,14 +181,15 @@ const LoginPage: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
                         id="userId"
                         name="userId"
                         type="text"
-                        placeholder="e.g. name.online"
+                        placeholder="printeg.online or shop_username"
                         autoComplete="username"
-                        className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-black focus:bg-white outline-none transition-all text-sm font-medium text-slate-900"
+                        className="w-full pl-12 pr-4 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-black focus:bg-white outline-none transition-all text-sm font-medium text-slate-900"
                         value={userId}
                         onChange={(e) => setUserId(e.target.value)}
                         required
                       />
                     </div>
+
                   </div>
 
                   <div>
@@ -171,9 +202,9 @@ const LoginPage: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
                         id="password"
                         name="password"
                         type={showPassword ? "text" : "password"}
-                        placeholder="Enter secret key"
+                        placeholder="Enter password"
                         autoComplete="current-password"
-                        className="w-full pl-12 pr-12 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-black focus:bg-white outline-none transition-all text-sm font-medium text-slate-900"
+                        className="w-full pl-12 pr-12 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-black focus:bg-white outline-none transition-all text-sm font-medium text-slate-900"
                         value={password}
                         onChange={(e) => setPassword(e.target.value)}
                         required
@@ -196,8 +227,8 @@ const LoginPage: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
 
                   {error && (
                     <div className="flex items-center gap-2 text-rose-600 text-xs font-bold bg-rose-50 p-4 rounded-2xl border border-rose-100 animate-in fade-in duration-300">
-                      <AlertCircle size={16} />
-                      {error}
+                      <AlertCircle size={16} className="shrink-0" />
+                      <span>{error}</span>
                     </div>
                   )}
 
@@ -294,6 +325,8 @@ const LoginPage: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
  */
 const App: React.FC = () => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [userRole, setUserRole] = useState<'admin' | 'merchant'>('admin');
+  const [loggedInMerchant, setLoggedInMerchant] = useState<Client | null>(null);
   const [activeView, setActiveView] = useState<'dashboard' | 'customers' | 'reports' | 'transactions'>('dashboard');
   const [clients, setClients] = useState<Client[]>([]);
   const [allOrders, setAllOrders] = useState<any[]>([]);
@@ -317,12 +350,31 @@ const App: React.FC = () => {
   const [newLocation, setNewLocation] = useState('');
   const [phoneNumber, setPhoneNumber] = useState('');
   const [phoneError, setPhoneError] = useState('');
+  const [merchantUsername, setMerchantUsername] = useState('');
+  const [merchantPassword, setMerchantPassword] = useState('');
+  const [showMerchantPassword, setShowMerchantPassword] = useState(false);
+  const [merchantUsernameTouched, setMerchantUsernameTouched] = useState(false);
   const [isInstitution, setIsInstitution] = useState(false);
   const [emailId, setEmailId] = useState('');
   const [onboardBw, setOnboardBw] = useState(1.5);
   const [onboardDouble, setOnboardDouble] = useState(2.0);
   const [onboardColor, setOnboardColor] = useState(10.0);
   const [onboardA4, setOnboardA4] = useState(1.0);
+
+  // Credentials View / Edit Modal State (Admin & Merchant)
+  const [showCredentialsModal, setShowCredentialsModal] = useState(false);
+  const [credentialsCopied, setCredentialsCopied] = useState<'user' | 'pass' | null>(null);
+  const [editMerchantUser, setEditMerchantUser] = useState('');
+  const [editMerchantPass, setEditMerchantPass] = useState('');
+  const [showEditPass, setShowEditPass] = useState(false);
+
+  // Onboard Success & QR Code Popup State
+  const [newlyOnboardedShop, setNewlyOnboardedShop] = useState<any | null>(null);
+  const [showOnboardSuccessModal, setShowOnboardSuccessModal] = useState(false);
+
+  // Merchant Live Queue Search & Filters
+  const [merchantOrderSearch, setMerchantOrderSearch] = useState('');
+  const [merchantOrderStatusFilter, setMerchantOrderStatusFilter] = useState<'all' | 'queued' | 'completed'>('all');
 
   // Delete Client State
   const [clientToDelete, setClientToDelete] = useState<string | null>(null);
@@ -635,6 +687,61 @@ const App: React.FC = () => {
   const activeCount = clients.filter(c => c.status === 'active').length;
   const pendingReportsCount = allReports.filter(r => r.status === 'pending').length;
 
+  // Web Audio API Chime for incoming paid orders
+  const playOrderChime = () => {
+    try {
+      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioContextClass) return;
+      const ctx = new AudioContextClass();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(587.33, ctx.currentTime); // D5
+      osc.frequency.setValueAtTime(880, ctx.currentTime + 0.12); // A5
+      gain.gain.setValueAtTime(0.25, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.45);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.45);
+    } catch {
+      // safe fallback
+    }
+  };
+
+  const seenPaidOrderIdsRef = React.useRef<Set<string>>(new Set());
+  const isInitialOrdersLoad = React.useRef(true);
+
+  useEffect(() => {
+    if (!allOrders || allOrders.length === 0) return;
+    const paidIds = new Set<string>();
+    let hasNewPaidForCurrentShop = false;
+
+    const currentShopSlug = selectedClient?.slug || selectedClient?.id;
+
+    allOrders.forEach((o: any) => {
+      const isPaid = o.payment_status === "PAID" || o.paymentStatus === "Paid";
+      if (isPaid) {
+        paidIds.add(o.id);
+        if (
+          !isInitialOrdersLoad.current &&
+          !seenPaidOrderIdsRef.current.has(o.id) &&
+          selectedClient &&
+          (o.vendorSlug === currentShopSlug || o.clientId === selectedClient.id || o.shopName === selectedClient.shopName)
+        ) {
+          hasNewPaidForCurrentShop = true;
+        }
+      }
+    });
+
+    if (hasNewPaidForCurrentShop) {
+      playOrderChime();
+    }
+
+    seenPaidOrderIdsRef.current = paidIds;
+    isInitialOrdersLoad.current = false;
+  }, [allOrders, selectedClient]);
+
   const handleOnboard = async (e: React.FormEvent) => {
     e.preventDefault();
     setPhoneError('');
@@ -660,6 +767,15 @@ const App: React.FC = () => {
       a4Sheet: parseFloat(String(onboardA4)) || 1.0,
     };
 
+    const finalMerchantUsername = (merchantUsername || cleanSlug.replace(/-/g, '_')).toLowerCase().trim();
+    const finalMerchantPassword = merchantPassword.trim() || `print@${Math.floor(1000 + Math.random() * 9000)}`;
+
+    const creds: MerchantCredentials = {
+      username: finalMerchantUsername,
+      password: finalMerchantPassword,
+      createdAt: new Date().toISOString()
+    };
+
     const newClientData: any = {
       id: cleanSlug,
       slug: cleanSlug,
@@ -680,6 +796,7 @@ const App: React.FC = () => {
       printers: [],
       phoneNumber: phoneNumber,
       phone: phoneNumber,
+      merchantCredentials: creds,
       ...(isInstitution && emailId ? { email: emailId } : {}),
       pricing: pricingObj,
       printingPrices: {
@@ -703,26 +820,106 @@ const App: React.FC = () => {
         address: newLocation,
         themeColor: '#000000',
         isActive: true,
+        merchantCredentials: creds,
         createdAt: new Date().toISOString(),
         pricing: pricingObj
-      });
+      }, { merge: true });
     } catch (err) {
       console.error('Error adding client / vendor:', err);
     }
 
+    const onboardedResult = {
+      ...newClientData,
+      id: cleanSlug,
+      slug: cleanSlug,
+      qrUrl: `https://printeg.in/store/${cleanSlug}`,
+      merchantCredentials: creds,
+    };
+
+    setNewlyOnboardedShop(onboardedResult);
     setShowOnboardModal(false);
+    setShowOnboardSuccessModal(true);
+
     // Reset form
     setNewShopName('');
     setNewOwnerName('');
     setNewLocation('');
     setPhoneNumber('');
     setPhoneError('');
+    setMerchantUsername('');
+    setMerchantPassword('');
+    setMerchantUsernameTouched(false);
     setIsInstitution(false);
     setEmailId('');
     setOnboardBw(1.5);
     setOnboardDouble(2.0);
     setOnboardColor(10.0);
     setOnboardA4(1.0);
+  };
+
+  const handleDownloadNewlyGeneratedQR = () => {
+    const canvas = document.getElementById('new-shop-qr-canvas') as HTMLCanvasElement;
+    if (!canvas) return;
+    const pngUrl = canvas.toDataURL('image/png').replace('image/png', 'image/octet-stream');
+    const downloadLink = document.createElement('a');
+    downloadLink.href = pngUrl;
+    downloadLink.download = `${newlyOnboardedShop?.slug || 'shop'}-printeg-qr.png`;
+    document.body.appendChild(downloadLink);
+    downloadLink.click();
+    document.body.removeChild(downloadLink);
+  };
+
+  const handleOpenCredentialsModal = (client: Client) => {
+    setSelectedClient(client);
+    setEditMerchantUser(client.merchantCredentials?.username || (client.slug || client.id).replace(/-/g, '_'));
+    setEditMerchantPass(client.merchantCredentials?.password || 'printeg123');
+    setShowCredentialsModal(true);
+  };
+
+  const handleSaveCredentials = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedClient) return;
+    const cleanUser = editMerchantUser.trim().toLowerCase();
+    const cleanPass = editMerchantPass.trim();
+    if (!cleanUser || !cleanPass) return;
+
+    const creds: MerchantCredentials = {
+      username: cleanUser,
+      password: cleanPass,
+      createdAt: selectedClient.merchantCredentials?.createdAt || new Date().toISOString(),
+    };
+
+    try {
+      await updateDoc(doc(db, 'clients', selectedClient.id), {
+        merchantCredentials: creds,
+      });
+      const slug = selectedClient.slug || selectedClient.id;
+      await setDoc(doc(db, 'vendors', slug), {
+        merchantCredentials: creds,
+      }, { merge: true });
+      setShowCredentialsModal(false);
+      alert('Merchant credentials saved successfully!');
+    } catch (err) {
+      console.error('Error updating merchant credentials:', err);
+    }
+  };
+
+  const handleMarkOrderPrinted = async (orderId: string, currentStatus: string) => {
+    const isCurrentlyDone = currentStatus === 'completed' || currentStatus === 'Printed' || currentStatus === 'COMPLETED';
+    const nextStatus = isCurrentlyDone ? 'pending' : 'completed';
+    const nextPrintedStatus = isCurrentlyDone ? 'Not Printed' : 'Printed';
+    const nextPrintStatus = isCurrentlyDone ? 'QUEUED' : 'COMPLETED';
+
+    try {
+      await updateDoc(doc(db, 'orders', orderId), {
+        status: nextStatus,
+        printedStatus: nextPrintedStatus,
+        print_status: nextPrintStatus,
+        printed_at: !isCurrentlyDone ? new Date().toISOString() : null,
+      });
+    } catch (err) {
+      console.error('Error updating order print status:', err);
+    }
   };
 
   const handleDeleteClient = (clientId: string) => {
@@ -745,7 +942,6 @@ const App: React.FC = () => {
   };
 
   const handleResolveReport = async (clientId: string, reportId: string) => {
-    // Try resolving in the top-level `reports` collection first
     const reportInCollection = allReportDocs.find(r => r.id === reportId);
     if (reportInCollection) {
       try {
@@ -754,7 +950,6 @@ const App: React.FC = () => {
         console.error('Error resolving report in collection:', err);
       }
     }
-    // Also update nested array inside client doc (for backwards compatibility)
     const client = clients.find(c => c.id === clientId);
     if (client && (client.reports || []).some(r => r.id === reportId)) {
       const updatedReports = (client.reports || []).map(r =>
@@ -770,6 +965,8 @@ const App: React.FC = () => {
 
   const handleSignOut = () => {
     setIsAuthenticated(false);
+    setUserRole('admin');
+    setLoggedInMerchant(null);
     setSelectedClient(null);
     setActiveView('dashboard');
   };
@@ -986,7 +1183,21 @@ const App: React.FC = () => {
 
 
   if (!isAuthenticated) {
-    return <LoginPage onLogin={() => setIsAuthenticated(true)} />;
+    return (
+      <LoginPage
+        clients={clients}
+        onLogin={(role, merchant) => {
+          setUserRole(role);
+          if (role === 'merchant' && merchant) {
+            setLoggedInMerchant(merchant);
+            setSelectedClient(merchant);
+          } else {
+            setLoggedInMerchant(null);
+          }
+          setIsAuthenticated(true);
+        }}
+      />
+    );
   }
 
   return (
@@ -1377,6 +1588,105 @@ const App: React.FC = () => {
         )
       }
 
+      {/* Merchant Credentials Modal for Super Admin */}
+      {showCredentialsModal && selectedClient && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowCredentialsModal(false)} />
+          <div className="relative bg-white w-full max-w-md rounded-3xl p-8 shadow-2xl animate-in zoom-in-95 duration-200">
+            <button onClick={() => setShowCredentialsModal(false)} className="absolute top-6 right-6 text-slate-400 hover:text-black">
+              <X size={24} />
+            </button>
+            <div className="flex items-center gap-3 mb-2">
+              <div className="w-10 h-10 rounded-xl bg-slate-900 text-white flex items-center justify-center font-bold">
+                <Lock size={18} />
+              </div>
+              <div>
+                <h3 className="text-xl font-display font-bold">Merchant Credentials</h3>
+                <p className="text-xs text-slate-500">{selectedClient.shopName}</p>
+              </div>
+            </div>
+            <p className="text-xs text-slate-500 mb-6">Give these login credentials to the shopkeeper to access their store portal and live order queue.</p>
+
+            <form onSubmit={handleSaveCredentials} className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-400 uppercase mb-1">Merchant User ID</label>
+                <div className="flex gap-2">
+                  <input
+                    required
+                    type="text"
+                    className="flex-1 px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-black"
+                    value={editMerchantUser}
+                    onChange={(e) => setEditMerchantUser(e.target.value)}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard.writeText(editMerchantUser);
+                      setCredentialsCopied('user');
+                      setTimeout(() => setCredentialsCopied(null), 2000);
+                    }}
+                    className="px-3 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold text-xs flex items-center gap-1 transition-colors"
+                    title="Copy Username"
+                  >
+                    {credentialsCopied === 'user' ? <Check size={14} className="text-emerald-600" /> : <Copy size={14} />}
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-400 uppercase mb-1">Merchant Password</label>
+                <div className="flex gap-2">
+                  <div className="relative flex-1">
+                    <input
+                      required
+                      type={showEditPass ? "text" : "password"}
+                      className="w-full px-4 py-2.5 pr-10 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-black"
+                      value={editMerchantPass}
+                      onChange={(e) => setEditMerchantPass(e.target.value)}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowEditPass(!showEditPass)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-black"
+                    >
+                      {showEditPass ? <EyeOff size={16} /> : <Eye size={16} />}
+                    </button>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard.writeText(editMerchantPass);
+                      setCredentialsCopied('pass');
+                      setTimeout(() => setCredentialsCopied(null), 2000);
+                    }}
+                    className="px-3 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold text-xs flex items-center gap-1 transition-colors"
+                    title="Copy Password"
+                  >
+                    {credentialsCopied === 'pass' ? <Check size={14} className="text-emerald-600" /> : <Copy size={14} />}
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex gap-3 pt-4">
+                <button
+                  type="button"
+                  onClick={() => setShowCredentialsModal(false)}
+                  className="flex-1 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-sm transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 py-3 bg-black hover:bg-slate-800 text-white font-bold rounded-xl text-sm transition-all shadow-lg shadow-black/10"
+                >
+                  Save Credentials
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {
         showOnboardModal && (
           <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
@@ -1386,7 +1696,7 @@ const App: React.FC = () => {
                 <X size={24} />
               </button>
               <h3 className="text-2xl font-display font-bold mb-2">Onboard New Shop</h3>
-              <p className="text-slate-500 mb-6">Register a new shop and set custom print pricing.</p>
+              <p className="text-slate-500 mb-6">Register a new shop, assign merchant credentials, and set custom print pricing.</p>
 
               <form onSubmit={handleOnboard} className="space-y-4">
                 <div>
@@ -1396,7 +1706,12 @@ const App: React.FC = () => {
                     className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-black transition-all"
                     placeholder="e.g. Royal Xerox & Prints"
                     value={newShopName}
-                    onChange={(e) => setNewShopName(e.target.value)}
+                    onChange={(e) => {
+                      setNewShopName(e.target.value);
+                      if (!merchantUsernameTouched) {
+                        setMerchantUsername(e.target.value.toLowerCase().trim().replace(/[^a-z0-9]+/g, '_').replace(/(^_|_$)/g, ''));
+                      }
+                    }}
                   />
                 </div>
 
@@ -1439,6 +1754,54 @@ const App: React.FC = () => {
                       <AlertCircle size={12} /> {phoneError}
                     </p>
                   )}
+                </div>
+
+                {/* Merchant Login Credentials */}
+                <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
+                      <Lock size={13} className="text-slate-500" />
+                      Merchant Login Credentials
+                    </span>
+                    <span className="text-[10px] text-slate-400 font-semibold">For Shop Owner</span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <span className="text-[10px] text-slate-500 font-semibold mb-1 block">Merchant User ID *</span>
+                      <input
+                        required
+                        type="text"
+                        className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-black"
+                        placeholder="e.g. royal_prints"
+                        value={merchantUsername}
+                        onChange={(e) => {
+                          setMerchantUsername(e.target.value);
+                          setMerchantUsernameTouched(true);
+                        }}
+                      />
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-slate-500 font-semibold mb-1 block">Merchant Password *</span>
+                      <div className="relative">
+                        <input
+                          required
+                          type={showMerchantPassword ? "text" : "password"}
+                          className="w-full px-3 py-2 pr-9 bg-white border border-slate-200 rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-black"
+                          placeholder="e.g. Print@2026"
+                          value={merchantPassword}
+                          onChange={(e) => setMerchantPassword(e.target.value)}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowMerchantPassword(!showMerchantPassword)}
+                          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-black"
+                        >
+                          {showMerchantPassword ? <EyeOff size={14} /> : <Eye size={14} />}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
                 </div>
 
                 {/* Pricing Fields */}
@@ -1524,8 +1887,8 @@ const App: React.FC = () => {
                   </div>
                 )}
 
-                <button type="submit" className="w-full bg-black text-white py-4 rounded-xl font-bold hover:bg-slate-800 transition-all mt-4 shadow-lg shadow-black/10">
-                  Onboard & Generate QR
+                <button type="submit" className="w-full bg-black text-white py-4 rounded-xl font-bold hover:bg-slate-800 transition-all mt-4 shadow-lg shadow-black/10 flex items-center justify-center gap-2">
+                  <QrCode size={18} /> Onboard & Generate QR Code
                 </button>
               </form>
             </div>
@@ -1533,13 +1896,119 @@ const App: React.FC = () => {
         )
       }
 
+      {/* Onboard Success & QR Code Modal */}
+      {showOnboardSuccessModal && newlyOnboardedShop && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowOnboardSuccessModal(false)} />
+          <div className="relative bg-white w-full max-w-lg rounded-3xl p-8 shadow-2xl animate-in zoom-in-95 duration-200 overflow-y-auto max-h-[90vh]">
+            <button onClick={() => setShowOnboardSuccessModal(false)} className="absolute top-6 right-6 text-slate-400 hover:text-black">
+              <X size={24} />
+            </button>
+
+            <div className="text-center mb-6">
+              <div className="w-14 h-14 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-3">
+                <CheckCircle2 size={32} />
+              </div>
+              <h3 className="text-2xl font-display font-bold text-slate-900">Shop Onboarded & QR Ready!</h3>
+              <p className="text-slate-500 text-sm mt-1">
+                <span className="font-bold text-slate-800">{newlyOnboardedShop.shopName}</span> is now active on PrintEG.
+              </p>
+            </div>
+
+            {/* QR Code Container */}
+            <div className="flex flex-col items-center justify-center p-6 bg-slate-50 rounded-2xl border border-slate-200 mb-6">
+              <div className="bg-white p-4 rounded-2xl shadow-md border border-slate-200 mb-4">
+                <QRCodeCanvas
+                  id="new-shop-qr-canvas"
+                  value={newlyOnboardedShop.qrUrl}
+                  size={190}
+                  level="H"
+                  includeMargin={true}
+                />
+              </div>
+
+              <span className="text-xs font-mono font-bold text-slate-600 mb-4 text-center break-all">
+                {newlyOnboardedShop.qrUrl}
+              </span>
+
+              <div className="flex gap-2 w-full">
+                <button
+                  type="button"
+                  onClick={handleDownloadNewlyGeneratedQR}
+                  className="flex-1 py-2.5 bg-black text-white rounded-xl text-xs font-bold hover:bg-slate-800 transition-all flex items-center justify-center gap-2 shadow-md shadow-black/10"
+                >
+                  <Download size={14} /> Download QR PNG
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard.writeText(newlyOnboardedShop.qrUrl);
+                    setCopiedStoreUrl(true);
+                    setTimeout(() => setCopiedStoreUrl(false), 2000);
+                  }}
+                  className="px-4 py-2.5 bg-white border border-slate-200 text-slate-700 rounded-xl text-xs font-bold hover:bg-slate-100 transition-all flex items-center justify-center gap-1.5"
+                >
+                  {copiedStoreUrl ? <Check size={14} className="text-emerald-600" /> : <Copy size={14} />}
+                  <span>{copiedStoreUrl ? 'Copied' : 'Copy Link'}</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Merchant Credentials Card */}
+            <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 mb-6 space-y-2">
+              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">
+                Shop Merchant Login Credentials
+              </span>
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <div className="bg-white p-2.5 rounded-xl border border-slate-200">
+                  <span className="text-slate-400 block text-[10px]">Username</span>
+                  <span className="font-bold text-slate-900 font-mono">{newlyOnboardedShop.merchantCredentials?.username}</span>
+                </div>
+                <div className="bg-white p-2.5 rounded-xl border border-slate-200">
+                  <span className="text-slate-400 block text-[10px]">Password</span>
+                  <span className="font-bold text-slate-900 font-mono">{newlyOnboardedShop.merchantCredentials?.password}</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={() => setShowOnboardSuccessModal(false)}
+                className="flex-1 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-sm transition-colors"
+              >
+                Close
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowOnboardSuccessModal(false);
+                  setSelectedClient(newlyOnboardedShop);
+                }}
+                className="flex-1 py-3 bg-black hover:bg-slate-800 text-white font-bold rounded-xl text-sm transition-all shadow-lg shadow-black/10"
+              >
+                Open Shop Desk
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {isSidebarOpen && <div className="fixed inset-0 bg-black/50 z-40 lg:hidden" onClick={() => setIsSidebarOpen(false)} />}
 
       <div className={`fixed inset-y-0 left-0 z-50 transform lg:relative lg:translate-x-0 transition-transform duration-300 ease-in-out ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         <Sidebar
           activeView={activeView}
-          setActiveView={(v) => { setActiveView(v); setSelectedClient(null); }}
+          setActiveView={(v) => {
+            setActiveView(v);
+            if (userRole !== 'merchant') {
+              setSelectedClient(null);
+            }
+          }}
           onSignOut={handleSignOut}
+          userRole={userRole}
+          merchantName={selectedClient?.shopName || 'Shop'}
+          merchantUsername={selectedClient?.merchantCredentials?.username || selectedClient?.slug}
         />
       </div>
 
@@ -1556,26 +2025,47 @@ const App: React.FC = () => {
 
           <header className="flex flex-col md:flex-row md:items-end justify-between mb-10 gap-6">
             <div className="max-w-xl">
-              {selectedClient && (
+              {selectedClient && userRole === 'admin' && (
                 <button onClick={() => setSelectedClient(null)} className="flex items-center gap-2 text-slate-500 hover:text-black mb-4 font-bold">
                   <ArrowLeft size={18} /> Back to Directory
                 </button>
               )}
               <div className="flex flex-col gap-1">
-                <h2 className="text-4xl font-display font-bold text-slate-900 mb-2">
-                  {selectedClient ? selectedClient.shopName : (activeView === 'customers' ? 'Client Directory' : activeView === 'reports' ? 'Support Inbox' : activeView === 'transactions' ? 'Transaction Logs' : 'Network Overview')}
-                </h2>
-                {selectedClient && (
-                  <div className="flex items-center gap-4 text-sm font-medium text-slate-500 mt-2">
-                    <span className="flex items-center gap-1.5 bg-slate-100 px-3 py-1.5 rounded-lg text-slate-600">
-                      <Printer size={14} /> {selectedClient.printers?.length || 0} Printers
+                <div className="flex items-center gap-3">
+                  <h2 className="text-4xl font-display font-bold text-slate-900 mb-1">
+                    {selectedClient ? selectedClient.shopName : (activeView === 'customers' ? 'Client Directory' : activeView === 'reports' ? 'Support Inbox' : activeView === 'transactions' ? 'Transaction Logs' : 'Network Overview')}
+                  </h2>
+                  {userRole === 'merchant' && (
+                    <span className="bg-emerald-50 text-emerald-700 text-xs px-2.5 py-1 rounded-full font-bold border border-emerald-200 flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                      Live Shop
                     </span>
+                  )}
+                </div>
+                {selectedClient && (
+                  <div className="flex flex-wrap items-center gap-3 text-sm font-medium text-slate-500 mt-1">
+                    <span className="flex items-center gap-1.5 bg-slate-100 px-3 py-1 rounded-lg text-slate-600 text-xs">
+                      <Printer size={13} /> {selectedClient.printers?.length || 0} Printers
+                    </span>
+                    <span className="flex items-center gap-1.5 bg-slate-100 px-3 py-1 rounded-lg text-slate-600 text-xs">
+                      <MapPin size={13} /> {selectedClient.location || 'Chennai'}
+                    </span>
+                    <a
+                      href={`https://printeg.in/store/${selectedClient.slug || selectedClient.id}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="flex items-center gap-1 text-slate-600 hover:text-black hover:underline text-xs"
+                    >
+                      printeg.in/store/{selectedClient.slug || selectedClient.id} <ExternalLink size={12} />
+                    </a>
                   </div>
                 )}
-                <p className="text-slate-500 text-lg mt-2">
-                  {selectedClient ? `Full audit log for Device ID: ${selectedClient.deviceId}` : (activeView === 'transactions' ? 'Real-time monitoring of all print jobs, payments, and system errors.' : 'Manage and monitor all printer IoT deployments across your network.')}
+                <p className="text-slate-500 text-sm mt-2">
+                  {selectedClient
+                    ? (userRole === 'merchant' ? 'Live incoming orders queue, auto-refreshed with incoming sound chime.' : `Full audit log for Device ID: ${selectedClient.deviceId}`)
+                    : (activeView === 'transactions' ? 'Real-time monitoring of all print jobs, payments, and system errors.' : 'Manage and monitor all printer IoT deployments across your network.')}
                 </p>
-                <div className="flex items-center gap-2 mt-3">
+                <div className="flex items-center gap-2 mt-2">
                   <div className={`w-2 h-2 rounded-full ${dbStatus === 'connected' ? 'bg-emerald-500' : dbStatus === 'error' ? 'bg-rose-500' : 'bg-amber-400 animate-pulse'}`} />
                   <span className={`text-xs font-bold ${dbStatus === 'connected' ? 'text-emerald-600' : dbStatus === 'error' ? 'text-rose-600' : 'text-amber-600'}`}>
                     {dbStatus === 'connected' ? 'Firestore Connected' : dbStatus === 'error' ? 'Firestore Error — check Rules' : 'Connecting to Firestore...'}
@@ -1583,20 +2073,42 @@ const App: React.FC = () => {
                 </div>
               </div>
             </div>
-            {activeView === 'customers' && !selectedClient && (
+            {activeView === 'customers' && !selectedClient && userRole === 'admin' && (
               <button onClick={() => setShowOnboardModal(true)} className="flex items-center justify-center gap-2 bg-black text-white px-8 py-4 rounded-full font-bold hover:bg-slate-800 transition-all shadow-xl shadow-black/10 active:scale-95 w-full md:w-auto">
                 <Plus size={20} /> Onboard Shop
               </button>
             )}
-            {/* Header Actions for Selected Client */}
-            {activeView === 'customers' && selectedClient && (
-              <div className="flex flex-col sm:flex-row gap-3 w-full md:w-auto">
-                <button onClick={handleOpenShopSettings} className="flex items-center justify-center gap-2 bg-white text-slate-700 border border-slate-200 px-6 py-3 rounded-full font-bold hover:bg-slate-50 transition-all shadow-sm active:scale-95 w-full sm:w-auto">
-                  <Settings size={18} /> Shop Settings
+            {/* Header Actions for Selected Client / Merchant */}
+            {selectedClient && (
+              <div className="flex flex-wrap items-center gap-2.5 w-full md:w-auto">
+                <button
+                  onClick={() => handleOpenCredentialsModal(selectedClient)}
+                  className="flex items-center justify-center gap-1.5 bg-slate-900 text-white px-4 py-2.5 rounded-xl font-bold hover:bg-black transition-all shadow-sm text-xs"
+                >
+                  <Lock size={14} /> Credentials
                 </button>
-                <button onClick={() => setShowAddPrinterModal(true)} className="flex items-center justify-center gap-2 bg-black text-white px-6 py-3 rounded-full font-bold hover:bg-slate-800 transition-all shadow-xl shadow-black/10 active:scale-95 w-full sm:w-auto">
-                  <Plus size={18} /> Add Printer
+                <button
+                  onClick={handleOpenShopSettings}
+                  className="flex items-center justify-center gap-1.5 bg-white text-slate-700 border border-slate-200 px-4 py-2.5 rounded-xl font-bold hover:bg-slate-50 transition-all shadow-sm text-xs"
+                >
+                  <Settings size={14} /> Rates & QR
                 </button>
+                {userRole === 'admin' && (
+                  <button
+                    onClick={() => setShowAddPrinterModal(true)}
+                    className="flex items-center justify-center gap-1.5 bg-black text-white px-4 py-2.5 rounded-xl font-bold hover:bg-slate-800 transition-all shadow-sm text-xs"
+                  >
+                    <Plus size={14} /> Add Printer
+                  </button>
+                )}
+                <a
+                  href={`https://printeg.in/store/${selectedClient.slug || selectedClient.id}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="flex items-center justify-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 px-4 py-2.5 rounded-xl font-bold transition-all text-xs"
+                >
+                  <ExternalLink size={14} /> Storefront
+                </a>
               </div>
             )}
           </header>
@@ -1758,8 +2270,224 @@ const App: React.FC = () => {
               ...(selectedClient.printers || []),
               ...fromCollection.filter(p => !nestedIds.has(p.id))
             ];
+
+            // Filter real-time Firestore orders specifically for this shop
+            const slug = selectedClient.slug || selectedClient.id;
+            const shopRawOrders = allOrders.filter(order => {
+              const isShopMatch =
+                order.vendorSlug === slug ||
+                order.vendorSlug === selectedClient.id ||
+                order.clientId === selectedClient.id ||
+                order.shopName === selectedClient.shopName ||
+                order.storeName === selectedClient.shopName;
+              return isShopMatch;
+            });
+
+            const queuedCount = shopRawOrders.filter(o => o.status !== 'completed' && o.printedStatus !== 'Printed' && o.print_status !== 'COMPLETED').length;
+            const completedCount = shopRawOrders.filter(o => o.status === 'completed' || o.printedStatus === 'Printed' || o.print_status === 'COMPLETED').length;
+
+            const filteredOrders = shopRawOrders.filter(order => {
+              const code = (order.orderCode || order.id || '').toLowerCase();
+              const phone = (order.mobileNumber || order.userPhoneNumber || order.phone || '').toLowerCase();
+              const query = merchantOrderSearch.toLowerCase();
+              const matchesSearch = !query || code.includes(query) || phone.includes(query);
+
+              const isDone = order.status === 'completed' || order.printedStatus === 'Printed' || order.print_status === 'COMPLETED';
+              if (merchantOrderStatusFilter === 'queued') return matchesSearch && !isDone;
+              if (merchantOrderStatusFilter === 'completed') return matchesSearch && isDone;
+              return matchesSearch;
+            }).sort((a, b) => new Date(b.createdAt || b.timestamp || b.paid_at || 0).getTime() - new Date(a.createdAt || a.timestamp || a.paid_at || 0).getTime());
+
+            const pricing = selectedClient.pricing || {
+              bw: selectedClient.printingPrices?.singleSide?.bw || 1.5,
+              doubleSided: selectedClient.printingPrices?.doubleSide?.bw || 2.0,
+              color: selectedClient.printingPrices?.singleSide?.color || 10.0,
+              a4Sheet: 1.0,
+            };
+
             return (
               <div className="space-y-10 animate-in fade-in duration-500">
+
+                {/* 1. Real-Time Live Print Orders Queue */}
+                <div className="bg-white border border-slate-200 rounded-3xl p-6 lg:p-8 shadow-sm">
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
+                    <div>
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+                        <h3 className="text-2xl font-display font-bold text-slate-900">Live Print Orders Queue</h3>
+                        {queuedCount > 0 && (
+                          <span className="bg-amber-50 text-amber-700 font-bold text-xs px-2.5 py-0.5 rounded-full border border-amber-200">
+                            {queuedCount} Queued
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-slate-500 text-xs">Customer orders arrive here in real-time. Click to view PDF and print.</p>
+                    </div>
+
+                    {/* Search and Filters */}
+                    <div className="flex flex-wrap items-center gap-2">
+                      <div className="relative">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
+                        <input
+                          type="text"
+                          placeholder="Search order or phone..."
+                          value={merchantOrderSearch}
+                          onChange={(e) => setMerchantOrderSearch(e.target.value)}
+                          className="pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium outline-none focus:ring-2 focus:ring-black w-44 md:w-56"
+                        />
+                      </div>
+
+                      <div className="flex items-center bg-slate-100 p-1 rounded-xl text-xs font-bold">
+                        <button
+                          onClick={() => setMerchantOrderStatusFilter('all')}
+                          className={`px-3 py-1.5 rounded-lg transition-all ${merchantOrderStatusFilter === 'all' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-black'}`}
+                        >
+                          All ({shopRawOrders.length})
+                        </button>
+                        <button
+                          onClick={() => setMerchantOrderStatusFilter('queued')}
+                          className={`px-3 py-1.5 rounded-lg transition-all ${merchantOrderStatusFilter === 'queued' ? 'bg-white text-amber-700 shadow-sm' : 'text-slate-500 hover:text-black'}`}
+                        >
+                          Queued ({queuedCount})
+                        </button>
+                        <button
+                          onClick={() => setMerchantOrderStatusFilter('completed')}
+                          className={`px-3 py-1.5 rounded-lg transition-all ${merchantOrderStatusFilter === 'completed' ? 'bg-white text-emerald-700 shadow-sm' : 'text-slate-500 hover:text-black'}`}
+                        >
+                          Printed ({completedCount})
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {filteredOrders.length === 0 ? (
+                    <div className="py-16 text-center bg-slate-50 rounded-2xl border border-dashed border-slate-200">
+                      <Printer size={32} className="mx-auto text-slate-300 mb-2" />
+                      <p className="font-bold text-slate-700 text-sm">No orders in this view</p>
+                      <p className="text-slate-400 text-xs mt-1">Orders placed by customers via your store URL will appear here automatically.</p>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                      {filteredOrders.map(order => {
+                        const isDone = order.status === 'completed' || order.printedStatus === 'Printed' || order.print_status === 'COMPLETED';
+                        const isPaid = order.payment_status === 'PAID' || order.paymentStatus === 'Paid';
+                        const shopEarnings = typeof order.vendorAmount === 'number'
+                          ? order.vendorAmount
+                          : (typeof order.subtotal === 'number' ? order.subtotal : Number(order.amount || 0));
+
+                        return (
+                          <div
+                            key={order.id}
+                            className={`p-5 rounded-2xl border transition-all flex flex-col justify-between ${isDone ? 'bg-slate-50/70 border-slate-200' : 'bg-white border-amber-200 shadow-md shadow-amber-500/5 ring-1 ring-amber-300/50'}`}
+                          >
+                            <div>
+                              <div className="flex items-start justify-between mb-3">
+                                <div>
+                                  <div className="flex items-center gap-2">
+                                    <span className="font-mono font-bold text-sm text-slate-900">
+                                      #{order.orderCode || order.id.slice(0, 8).toUpperCase()}
+                                    </span>
+                                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${isPaid ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-amber-50 text-amber-700 border border-amber-200'}`}>
+                                      {isPaid ? 'PAID' : 'PENDING'}
+                                    </span>
+                                  </div>
+                                  <span className="text-[11px] text-slate-400 block mt-0.5">
+                                    {order.createdAt || order.timestamp ? new Date(order.createdAt || order.timestamp).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' }) : 'Recent'}
+                                  </span>
+                                </div>
+
+                                <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${isDone ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>
+                                  {isDone ? 'PRINTED' : 'QUEUED'}
+                                </span>
+                              </div>
+
+                              {/* Specs */}
+                              <div className="bg-slate-50 p-3 rounded-xl mb-3 space-y-1 text-xs">
+                                <div className="flex justify-between">
+                                  <span className="text-slate-500">Customer:</span>
+                                  <span className="font-bold text-slate-800">{order.mobileNumber || order.userPhoneNumber || 'Walk-in'}</span>
+                                </div>
+                                <div className="flex justify-between">
+                                  <span className="text-slate-500">Job Specs:</span>
+                                  <span className="font-bold text-slate-800">
+                                    {order.totalPages || order.pages || 1} pgs • {order.isColor ? 'Color' : 'B&W'} • {order.printSide === 'double' ? '2-Sided' : '1-Sided'} ({order.copies || 1}x)
+                                  </span>
+                                </div>
+                                <div className="flex justify-between pt-1 border-t border-slate-200/60">
+                                  <span className="text-slate-500">Shop Net Credit:</span>
+                                  <span className="font-black text-emerald-700 text-sm">₹{shopEarnings.toFixed(2)}</span>
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Actions */}
+                            <div className="flex items-center gap-2 pt-2">
+                              {order.fileUrl ? (
+                                <a
+                                  href={order.fileUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="flex-1 py-2 bg-slate-900 hover:bg-black text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-colors"
+                                >
+                                  <Download size={13} /> View / Print PDF
+                                </a>
+                              ) : (
+                                <div className="flex-1 py-2 bg-slate-100 text-slate-400 rounded-xl text-xs font-bold text-center">
+                                  No File Attached
+                                </div>
+                              )}
+
+                              <button
+                                onClick={() => handleMarkOrderPrinted(order.id, isDone ? 'completed' : 'pending')}
+                                className={`px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-1 transition-colors ${isDone ? 'bg-slate-100 text-slate-600 hover:bg-slate-200' : 'bg-emerald-600 hover:bg-emerald-700 text-white'}`}
+                                title={isDone ? 'Re-open Order' : 'Mark as Printed'}
+                              >
+                                <CheckCircle2 size={14} />
+                                {isDone ? 'Done' : 'Mark Printed'}
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {/* 2. Store Pricing Rate Card */}
+                <div className="bg-white border border-slate-200 rounded-3xl p-6 lg:p-8 shadow-sm">
+                  <div className="flex items-center justify-between mb-4">
+                    <div>
+                      <h3 className="text-xl font-display font-bold text-slate-900">Current Print Rates</h3>
+                      <p className="text-slate-500 text-xs">Customer charges configured for this shop (100% credited to shop).</p>
+                    </div>
+                    <button
+                      onClick={handleOpenShopSettings}
+                      className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold rounded-xl flex items-center gap-1.5 transition-colors"
+                    >
+                      <Settings size={13} /> Edit Rates
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                    <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200">
+                      <span className="text-[11px] font-bold text-slate-400 uppercase block mb-1">B&W Single Sided</span>
+                      <span className="text-2xl font-black text-slate-900">₹{pricing.bw.toFixed(2)}</span>
+                    </div>
+                    <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200">
+                      <span className="text-[11px] font-bold text-slate-400 uppercase block mb-1">B&W Double Sided</span>
+                      <span className="text-2xl font-black text-slate-900">₹{pricing.doubleSided.toFixed(2)}</span>
+                    </div>
+                    <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200">
+                      <span className="text-[11px] font-bold text-slate-400 uppercase block mb-1">Color Print</span>
+                      <span className="text-2xl font-black text-slate-900">₹{pricing.color.toFixed(2)}</span>
+                    </div>
+                    <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200">
+                      <span className="text-[11px] font-bold text-slate-400 uppercase block mb-1">Blank A4 Sheet</span>
+                      <span className="text-2xl font-black text-slate-900">₹{(pricing.a4Sheet || 1.0).toFixed(2)}</span>
+                    </div>
+                  </div>
+                </div>
+
                 {/* Printers Section */}
                 {merged.length > 0 && (
                   <div>
@@ -2059,7 +2787,7 @@ const App: React.FC = () => {
           }
 
           {
-            activeView === 'dashboard' && (
+            activeView === 'dashboard' && !selectedClient && userRole === 'admin' && (
               <div className="space-y-8 animate-in zoom-in-95 duration-500">
 
                 {/* Dashboard Stats */}
