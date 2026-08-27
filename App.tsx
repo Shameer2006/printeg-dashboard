@@ -2260,7 +2260,7 @@ const App: React.FC = () => {
             </>
           )}
 
-          {activeView === 'customers' && selectedClient && (() => {
+          {selectedClient && (() => {
             // Merge printers from top-level `printers` collection + nested client.printers[]
             const fromCollection = allPrinterDocs.filter(
               p => p.clientId === selectedClient.id || p.shopName === selectedClient.shopName
