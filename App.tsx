@@ -530,8 +530,16 @@ const App: React.FC = () => {
       return sum + (p * c);
     }, 0);
     const todayVendorPayout = todayOrders.reduce((sum, o) => {
-      const v = typeof o.vendorAmount === "number" ? o.vendorAmount : (typeof o.subtotal === "number" ? o.subtotal : (Number(o.amount) || 0) * 0.92);
+      const v = typeof o.vendorAmount === "number"
+        ? o.vendorAmount
+        : (typeof o.subtotal === "number" ? o.subtotal : (Number(o.amount) || 0) / 1.08);
       return sum + v;
+    }, 0);
+    const todayPlatformMargin = todayOrders.reduce((sum, o) => {
+      const fee = typeof o.platformFee === "number"
+        ? o.platformFee
+        : (typeof o.subtotal === "number" ? Math.max(0, (Number(o.amount) || 0) - o.subtotal) : (Number(o.amount || 0) * 0.08 / 1.08));
+      return sum + fee;
     }, 0);
 
     const allTimeRevenue = shopOrders.reduce((sum, o) => sum + (Number(o.amount) || Number(o.cost) || 0), 0);
@@ -540,17 +548,32 @@ const App: React.FC = () => {
       const c = Number(o.copies || 1);
       return sum + (p * c);
     }, 0);
+    const allTimeVendorPayout = shopOrders.reduce((sum, o) => {
+      const v = typeof o.vendorAmount === "number"
+        ? o.vendorAmount
+        : (typeof o.subtotal === "number" ? o.subtotal : (Number(o.amount) || 0) / 1.08);
+      return sum + v;
+    }, 0);
+    const allTimePlatformMargin = shopOrders.reduce((sum, o) => {
+      const fee = typeof o.platformFee === "number"
+        ? o.platformFee
+        : (typeof o.subtotal === "number" ? Math.max(0, (Number(o.amount) || 0) - o.subtotal) : (Number(o.amount || 0) * 0.08 / 1.08));
+      return sum + fee;
+    }, 0);
 
     return {
       today: {
         revenue: todayRevenue,
         pages: todayPages,
         vendorPayout: todayVendorPayout,
+        platformMargin: todayPlatformMargin,
         orderCount: todayOrders.length,
       },
       allTime: {
         revenue: allTimeRevenue,
         pages: allTimePages,
+        vendorPayout: allTimeVendorPayout,
+        platformMargin: allTimePlatformMargin,
         orderCount: shopOrders.length,
       }
     };
@@ -569,6 +592,58 @@ const App: React.FC = () => {
     const collectionIds = new Set(fromCollection.map(p => p.id));
     return [...fromCollection, ...fromNested.filter(p => !collectionIds.has(p.id))];
   }, [selectedClient, allPrinterDocs]);
+
+  // Global Platform Financials (Super Admin 8% Margin Tracking)
+  const platformFinancials = useMemo(() => {
+    const isTodayDate = (dateStr: string) => {
+      if (!dateStr) return false;
+      const d = new Date(dateStr);
+      const now = new Date();
+      return (
+        d.getDate() === now.getDate() &&
+        d.getMonth() === now.getMonth() &&
+        d.getFullYear() === now.getFullYear()
+      );
+    };
+
+    const paidOrders = allOrders.filter(
+      (o) => o.payment_status === "PAID" || o.paymentStatus === "Paid"
+    );
+
+    const totalGMV = paidOrders.reduce((sum, o) => sum + (Number(o.amount) || Number(o.cost) || 0), 0);
+
+    const totalPlatformMargin = paidOrders.reduce((sum, o) => {
+      const fee = typeof o.platformFee === "number"
+        ? o.platformFee
+        : (typeof o.subtotal === "number" ? Math.max(0, (Number(o.amount) || 0) - o.subtotal) : (Number(o.amount || 0) * 0.08 / 1.08));
+      return sum + fee;
+    }, 0);
+
+    const totalMerchantPayout = paidOrders.reduce((sum, o) => {
+      const v = typeof o.vendorAmount === "number"
+        ? o.vendorAmount
+        : (typeof o.subtotal === "number" ? o.subtotal : (Number(o.amount) || 0) / 1.08);
+      return sum + v;
+    }, 0);
+
+    const todayOrders = paidOrders.filter((o) => isTodayDate(o.createdAt || o.paid_at || o.timestamp));
+    const todayGMV = todayOrders.reduce((sum, o) => sum + (Number(o.amount) || Number(o.cost) || 0), 0);
+    const todayPlatformMargin = todayOrders.reduce((sum, o) => {
+      const fee = typeof o.platformFee === "number"
+        ? o.platformFee
+        : (typeof o.subtotal === "number" ? Math.max(0, (Number(o.amount) || 0) - o.subtotal) : (Number(o.amount || 0) * 0.08 / 1.08));
+      return sum + fee;
+    }, 0);
+
+    return {
+      totalGMV,
+      totalPlatformMargin,
+      totalMerchantPayout,
+      todayGMV,
+      todayPlatformMargin,
+      paidOrderCount: paidOrders.length,
+    };
+  }, [allOrders]);
 
 
   // Dashboard Stats Calculations
@@ -2133,69 +2208,110 @@ const App: React.FC = () => {
             return (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-10">
                 {selectedClient ? (
-                  <>
-                    <StatCard
-                      label="Today's Total Amount"
-                      value={`₹${(selectedShopDailyStats?.today.revenue || 0).toFixed(2)}`}
-                      subValue={`Payout: ₹${(selectedShopDailyStats?.today.vendorPayout || 0).toFixed(2)}`}
-                      icon={<Receipt size={18} />}
-                      iconBg="bg-emerald-50"
-                      iconColor="text-emerald-600"
-                    />
-                    <StatCard
-                      label="Today's Prints"
-                      value={`${(selectedShopDailyStats?.today.pages || 0).toLocaleString()} pgs`}
-                      subValue={`${selectedShopDailyStats?.today.orderCount || 0} orders today`}
-                      icon={<Printer size={18} />}
-                      iconBg="bg-blue-50"
-                      iconColor="text-blue-600"
-                    />
-                    <StatCard
-                      label="All-Time Revenue"
-                      value={`₹${(selectedShopDailyStats?.allTime.revenue || 0).toFixed(2)}`}
-                      subValue={`${(selectedShopDailyStats?.allTime.pages || 0).toLocaleString()} total pgs`}
-                      icon={<TrendingUp size={18} />}
-                      iconBg="bg-purple-50"
-                      iconColor="text-purple-600"
-                    />
-                    <StatCard
-                      label="Deployed Printers"
-                      value={mergedPrinters.length.toString()}
-                      icon={<LayoutGrid size={18} />}
-                      iconBg="bg-slate-100"
-                      iconColor="text-slate-700"
-                    />
-                  </>
+                  userRole === 'admin' ? (
+                    <>
+                      <StatCard
+                        label="Shop Net Payout"
+                        value={`₹${(selectedShopDailyStats?.allTime.vendorPayout || 0).toFixed(2)}`}
+                        subValue={`Today: ₹${(selectedShopDailyStats?.today.vendorPayout || 0).toFixed(2)}`}
+                        icon={<Receipt size={18} />}
+                        iconBg="bg-blue-50"
+                        iconColor="text-blue-600"
+                      />
+                      <StatCard
+                        label="PrintEG Margin (8%)"
+                        value={`₹${(selectedShopDailyStats?.allTime.platformMargin || 0).toFixed(2)}`}
+                        subValue={`Today: +₹${(selectedShopDailyStats?.today.platformMargin || 0).toFixed(2)}`}
+                        icon={<TrendingUp size={18} />}
+                        iconBg="bg-emerald-50"
+                        iconColor="text-emerald-600"
+                        highlight={true}
+                      />
+                      <StatCard
+                        label="Total Prints"
+                        value={`${(selectedShopDailyStats?.allTime.pages || 0).toLocaleString()} pgs`}
+                        subValue={`Today: ${(selectedShopDailyStats?.today.pages || 0).toLocaleString()} pgs`}
+                        icon={<Printer size={18} />}
+                        iconBg="bg-purple-50"
+                        iconColor="text-purple-600"
+                      />
+                      <StatCard
+                        label="Deployed Printers"
+                        value={mergedPrinters.length.toString()}
+                        icon={<LayoutGrid size={18} />}
+                        iconBg="bg-slate-100"
+                        iconColor="text-slate-700"
+                      />
+                    </>
+                  ) : (
+                    <>
+                      <StatCard
+                        label="Today's Payout"
+                        value={`₹${(selectedShopDailyStats?.today.vendorPayout || 0).toFixed(2)}`}
+                        subValue={`${selectedShopDailyStats?.today.orderCount || 0} orders today`}
+                        icon={<Receipt size={18} />}
+                        iconBg="bg-emerald-50"
+                        iconColor="text-emerald-600"
+                      />
+                      <StatCard
+                        label="Today's Prints"
+                        value={`${(selectedShopDailyStats?.today.pages || 0).toLocaleString()} pgs`}
+                        subValue="Live queue active"
+                        icon={<Printer size={18} />}
+                        iconBg="bg-blue-50"
+                        iconColor="text-blue-600"
+                      />
+                      <StatCard
+                        label="All-Time Earnings"
+                        value={`₹${(selectedShopDailyStats?.allTime.vendorPayout || 0).toFixed(2)}`}
+                        subValue={`${(selectedShopDailyStats?.allTime.pages || 0).toLocaleString()} total pgs`}
+                        icon={<TrendingUp size={18} />}
+                        iconBg="bg-purple-50"
+                        iconColor="text-purple-600"
+                      />
+                      <StatCard
+                        label="Deployed Printers"
+                        value={mergedPrinters.length.toString()}
+                        icon={<LayoutGrid size={18} />}
+                        iconBg="bg-slate-100"
+                        iconColor="text-slate-700"
+                      />
+                    </>
+                  )
                 ) : (
                   <>
                     <StatCard
-                      label="Total Prints"
-                      value={totalPrints.toLocaleString()}
-                      icon={<Printer size={18} />}
+                      label="PrintEG Margin (8%)"
+                      value={`₹${platformFinancials.totalPlatformMargin.toFixed(2)}`}
+                      subValue={`Today: +₹${platformFinancials.todayPlatformMargin.toFixed(2)}`}
+                      icon={<TrendingUp size={18} />}
+                      iconBg="bg-emerald-50"
+                      iconColor="text-emerald-600"
+                      highlight={true}
+                    />
+                    <StatCard
+                      label="Gross GMV Collected"
+                      value={`₹${platformFinancials.totalGMV.toFixed(2)}`}
+                      subValue={`Today: ₹${platformFinancials.todayGMV.toFixed(2)}`}
+                      icon={<Receipt size={18} />}
+                      iconBg="bg-purple-50"
+                      iconColor="text-purple-600"
+                    />
+                    <StatCard
+                      label="Merchant Payout Pool"
+                      value={`₹${platformFinancials.totalMerchantPayout.toFixed(2)}`}
+                      subValue="100% Base Subtotal"
+                      icon={<LayoutGrid size={18} />}
                       iconBg="bg-blue-50"
                       iconColor="text-blue-600"
                     />
                     <StatCard
-                      label="Deployed Units"
-                      value={totalPrinters.toString()}
-                      icon={<LayoutGrid size={18} />}
-                      iconBg="bg-emerald-50"
-                      iconColor="text-emerald-600"
-                    />
-                    <StatCard
-                      label="Open Reports"
-                      value={pendingReportsCount.toString()}
-                      icon={<MessageSquare size={18} />}
-                      iconBg="bg-amber-50"
-                      iconColor="text-amber-600"
-                      highlight={pendingReportsCount > 0}
-                    />
-                    <StatCard
-                      label="Total Revenue"
-                      value={`₹${totalRevenue}`}
-                      icon={<Receipt size={18} />}
-                      iconBg="bg-purple-50"
-                      iconColor="text-purple-600"
+                      label="Total Prints"
+                      value={`${totalPrints.toLocaleString()} pgs`}
+                      subValue={`${platformFinancials.paidOrderCount} paid orders`}
+                      icon={<Printer size={18} />}
+                      iconBg="bg-slate-100"
+                      iconColor="text-slate-700"
                     />
                   </>
                 )}
