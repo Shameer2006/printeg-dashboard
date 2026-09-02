@@ -1153,53 +1153,68 @@ const App: React.FC = () => {
 
   const confirmDeleteClient = async () => {
     if (clientToDelete) {
+      const clientObj = clients.find(c => c.id === clientToDelete);
+      const slug = clientObj?.slug || clientObj?.id || clientToDelete;
+
+      console.log('=== DELETE CLIENT START ===');
+      console.log('clientToDelete:', clientToDelete);
+      console.log('slug:', slug);
+      console.log('shopName:', clientObj?.shopName);
+
+      // Step 1: Delete from clients collection
       try {
-        const clientObj = clients.find(c => c.id === clientToDelete);
-        const slug = clientObj?.slug || clientObj?.id || clientToDelete;
-        const shopName = clientObj?.shopName || '';
-        const phone = clientObj?.phoneNumber || (clientObj as any)?.phone || '';
-
-        // 1. Delete from clients collection
         await deleteDoc(doc(db, 'clients', clientToDelete));
+        console.log('✅ Deleted from clients collection:', clientToDelete);
+      } catch (err) {
+        console.error('❌ Failed to delete from clients:', err);
+      }
 
-        // 2. Identify all vendor document IDs to delete
-        const vendorDocIdsToDelete = new Set<string>();
-        if (slug) vendorDocIdsToDelete.add(slug);
-        if (clientToDelete) vendorDocIdsToDelete.add(clientToDelete);
+      // Step 2: Delete vendor by slug
+      try {
+        await deleteDoc(doc(db, 'vendors', slug));
+        console.log('✅ Deleted from vendors collection (slug):', slug);
+      } catch (err) {
+        console.error('❌ Failed to delete vendor by slug:', slug, err);
+      }
 
-        // 3. Scan vendors collection for any matching documents (by slug, clientId, or storeName)
+      // Step 3: Delete vendor by clientId (if different from slug)
+      if (clientToDelete !== slug) {
         try {
-          const vendorsSnap = await getDocs(collection(db, 'vendors'));
-          vendorsSnap.forEach((vDoc) => {
-            const data = vDoc.data();
-            const matchesSlug = slug && (vDoc.id === slug || data.slug === slug);
-            const matchesClientId = clientToDelete && (vDoc.id === clientToDelete || data.id === clientToDelete || data.clientId === clientToDelete);
-            const matchesStoreName = shopName && (data.storeName === shopName || data.shopName === shopName);
-            const matchesPhone = phone && (data.phone === phone || data.phoneNumber === phone);
-
-            if (matchesSlug || matchesClientId || (matchesStoreName && matchesPhone)) {
-              vendorDocIdsToDelete.add(vDoc.id);
-            }
-          });
-        } catch (queryErr) {
-          console.warn('Could not scan vendors collection, proceeding with direct keys:', queryErr);
+          await deleteDoc(doc(db, 'vendors', clientToDelete));
+          console.log('✅ Deleted from vendors collection (clientId):', clientToDelete);
+        } catch (err) {
+          console.error('❌ Failed to delete vendor by clientId:', clientToDelete, err);
         }
+      }
 
-        // 4. Delete all matching vendor documents
-        for (const vId of vendorDocIdsToDelete) {
-          try {
-            await deleteDoc(doc(db, 'vendors', vId));
-          } catch (vErr) {
-            console.error(`Error deleting vendor doc ${vId}:`, vErr);
+      // Step 4: Scan and delete any remaining matching vendors
+      try {
+        const vendorsSnap = await getDocs(collection(db, 'vendors'));
+        console.log('Scanning vendors collection, total docs:', vendorsSnap.size);
+        for (const vDoc of vendorsSnap.docs) {
+          const data = vDoc.data();
+          const vSlug = data.slug || vDoc.id;
+          if (
+            vDoc.id === slug ||
+            vDoc.id === clientToDelete ||
+            vSlug === slug ||
+            data.clientId === clientToDelete ||
+            data.storeName === clientObj?.shopName ||
+            data.shopName === clientObj?.shopName
+          ) {
+            await deleteDoc(doc(db, 'vendors', vDoc.id));
+            console.log('✅ Deleted matching vendor doc:', vDoc.id);
           }
         }
-
-        if (selectedClient?.id === clientToDelete) {
-          setSelectedClient(null);
-          setShowDetailsPanel(false);
-        }
       } catch (err) {
-        console.error('Error deleting client and vendor:', err);
+        console.error('❌ Failed during vendor scan cleanup:', err);
+      }
+
+      console.log('=== DELETE CLIENT COMPLETE ===');
+
+      if (selectedClient?.id === clientToDelete) {
+        setSelectedClient(null);
+        setShowDetailsPanel(false);
       }
       setClientToDelete(null);
     }
