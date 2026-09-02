@@ -50,7 +50,7 @@ import { StatCard } from './components/StatCard';
 import { ClientCard } from './components/ClientCard';
 import { Client, StatusType, PrintPrices, VendorPricing, PriceTier, PageRangeTier, BindingPricing, BindingItemConfig, SpiralRangeTier, Superuser } from './types';
 import { db } from './src/lib/firebase';
-import { collection, onSnapshot, query, addDoc, deleteDoc, updateDoc, doc, setDoc, getDocs, where } from 'firebase/firestore';
+import { collection, collectionGroup, onSnapshot, query, addDoc, deleteDoc, updateDoc, doc, setDoc, getDocs, where } from 'firebase/firestore';
 
 const DEFAULT_SINGLE_SIDE_TIERS: PageRangeTier[] = [
   { id: '1', minPages: 1, maxPages: 10, rate: 1.5 },
@@ -572,23 +572,31 @@ const App: React.FC = () => {
   }, [clients, allReportDocs]);
 
   // Extract all transactions for the global "Transactions" view
-  // Merges top-level `orders` collection with any nested client.history[]
+  // Merges all orders (from collectionGroup and root) with any nested client.history[]
   const allTransactions = useMemo(() => {
-    // From top-level `orders` collection
+    // From allOrders (collectionGroup + root orders)
     const fromCollection = allOrders.map(order => ({
-      id: String(order.id),
-      timestamp: String(order.timestamp || order.createdAt || ''),
-      pages: Number(order.pages || order.pageCount || 0),
-      type: String(order.type || order.printType || 'B/W'),
+      id: String(order.orderCode || order.id),
+      timestamp: String(order.timestamp || order.createdAt || order.paid_at || ''),
+      pages: Number(order.totalPages || order.pages || order.pageCount || 1),
+      type: String(order.isColor ? 'Color' : (order.type || order.printType || 'B/W')),
       status: String(order.status || 'Completed'),
-      userPhoneNumber: String(order.userPhoneNumber || order.phone || order.userId || ''),
-      printerName: String(order.printerName || order.printer || ''),
-      paymentStatus: String(order.paymentStatus || order.payment || 'Pending'),
-      cost: String(order.cost || order.amount || '₹0'),
+      userPhoneNumber: String(order.mobileNumber || order.userPhoneNumber || order.phone || order.userId || ''),
+      printerName: String(order.printerName || order.printer || 'Cloud Print'),
+      paymentStatus: String(order.payment_status === 'PAID' ? 'Paid' : (order.paymentStatus || order.payment || 'Pending')),
+      cost: typeof order.amount === 'number' ? `₹${order.amount.toFixed(2)}` : String(order.cost || order.amount || '₹0'),
       errorDetails: order.errorDetails ? String(order.errorDetails) : undefined,
-      printedStatus: String(order.printedStatus || 'Not Printed'),
-      shopName: String(order.shopName || order.shop || clients.find(c => c.id === order.clientId)?.shopName || 'Unknown Shop'),
-      clientId: String(order.clientId || ''),
+      printedStatus: String(order.printedStatus || (order.print_status === 'COMPLETED' ? 'Printed' : 'Not Printed')),
+      shopName: String(
+        order.shopName ||
+        order.storeName ||
+        clients.find(c => c.id === order.clientId || c.slug === order.vendorSlug || c.id === order.vendorSlug)?.shopName ||
+        order.vendorSlug ||
+        'Store Order'
+      ),
+      clientId: String(order.clientId || order.vendorSlug || ''),
+      vendorSlug: order.vendorSlug,
+      _docPath: order._docPath,
       _source: 'collection' as const
     }));
     // From nested client.history[]
@@ -598,6 +606,7 @@ const App: React.FC = () => {
         id: String(job.id),
         shopName: String(client.shopName),
         clientId: String(client.id),
+        vendorSlug: client.slug || client.id,
         userPhoneNumber: String(job.userPhoneNumber || ''),
         _source: 'nested' as const
       }))
@@ -614,7 +623,17 @@ const App: React.FC = () => {
     if (!selectedClient) return [];
     const slug = selectedClient.slug || selectedClient.id;
     return allTransactions.filter(
-      tx => tx.clientId === selectedClient.id || tx.clientId === slug || tx.shopName === selectedClient.shopName
+      tx =>
+        tx.clientId === selectedClient.id ||
+        tx.clientId === slug ||
+        tx.shopName === selectedClient.shopName ||
+        (tx as any).vendorSlug === slug ||
+        (tx as any).vendorSlug === selectedClient.id ||
+        (typeof (tx as any)._docPath === 'string' && (
+          (tx as any)._docPath.startsWith(`vendors/${slug}/`) ||
+          (tx as any)._docPath.startsWith(`vendors/${selectedClient.id}/`) ||
+          (tx as any)._docPath.startsWith(`clients/${selectedClient.id}/`)
+        ))
     );
   }, [selectedClient, allTransactions]);
 
@@ -641,7 +660,12 @@ const App: React.FC = () => {
         order.vendorSlug === selectedClient.id ||
         order.clientId === selectedClient.id ||
         order.shopName === selectedClient.shopName ||
-        order.storeName === selectedClient.shopName;
+        order.storeName === selectedClient.shopName ||
+        (typeof order._docPath === 'string' && (
+          order._docPath.startsWith(`vendors/${slug}/`) ||
+          order._docPath.startsWith(`vendors/${selectedClient.id}/`) ||
+          order._docPath.startsWith(`clients/${selectedClient.id}/`)
+        ));
       const isPaid = order.payment_status === "PAID" || order.paymentStatus === "Paid";
       return isThisShop && isPaid;
     });
@@ -879,19 +903,79 @@ const App: React.FC = () => {
     };
   }, []);
 
-  // Fetch Orders from top-level `orders` collection
+  // Fetch All Orders across Root and Vendor Subcollections (e.g. vendors/{slug}/orders)
   useEffect(() => {
-    const q = query(collection(db, "orders"));
-    const unsubscribe = onSnapshot(q, (querySnapshot) => {
-      const data: any[] = [];
-      querySnapshot.forEach((docSnap) => {
-        data.push({ id: docSnap.id, ...docSnap.data() });
+    let groupData: any[] = [];
+    let rootData: any[] = [];
+
+    const mergeOrders = () => {
+      const orderMap = new Map<string, any>();
+      // 1. First add collectionGroup orders (covers vendors/{slug}/orders/1234, etc.)
+      groupData.forEach(o => {
+        const key = String(o.orderCode || o.id);
+        orderMap.set(key, o);
       });
-      setAllOrders(data);
+      // 2. Merge root orders (orders/1234)
+      rootData.forEach(o => {
+        const key = String(o.orderCode || o.id);
+        if (!orderMap.has(key)) {
+          orderMap.set(key, o);
+        } else {
+          // Merge root data with subcollection data
+          orderMap.set(key, { ...o, ...orderMap.get(key) });
+        }
+      });
+      const finalOrders = Array.from(orderMap.values());
+      setAllOrders(finalOrders);
+    };
+
+    // Query all 'orders' collections everywhere in Firestore (collectionGroup)
+    const qGroup = query(collectionGroup(db, "orders"));
+    const unsubGroup = onSnapshot(qGroup, (snap) => {
+      groupData = [];
+      snap.forEach((docSnap) => {
+        const d = docSnap.data();
+        const path = docSnap.ref.path;
+        let pathVendorSlug: string | undefined = undefined;
+        const pathParts = path.split('/');
+        // Parse vendor slug if path is like 'vendors/my-shop/orders/1234'
+        if (pathParts.length >= 4 && pathParts[0] === 'vendors' && pathParts[2] === 'orders') {
+          pathVendorSlug = pathParts[1];
+        }
+        groupData.push({
+          id: docSnap.id,
+          orderCode: d.orderCode || docSnap.id,
+          vendorSlug: d.vendorSlug || pathVendorSlug,
+          _docPath: path,
+          ...d
+        });
+      });
+      mergeOrders();
     }, (error) => {
-      console.error("Error fetching orders:", error);
+      console.warn("collectionGroup('orders') notice:", error);
     });
-    return () => unsubscribe();
+
+    // Also query root 'orders' collection as fallback / direct source
+    const qRoot = query(collection(db, "orders"));
+    const unsubRoot = onSnapshot(qRoot, (snap) => {
+      rootData = [];
+      snap.forEach((docSnap) => {
+        rootData.push({
+          id: docSnap.id,
+          orderCode: docSnap.data().orderCode || docSnap.id,
+          _docPath: `orders/${docSnap.id}`,
+          ...docSnap.data()
+        });
+      });
+      mergeOrders();
+    }, (error) => {
+      console.error("Error fetching root orders:", error);
+    });
+
+    return () => {
+      unsubGroup();
+      unsubRoot();
+    };
   }, []);
 
   // Fetch Printers from top-level `printers` collection
@@ -1242,21 +1326,43 @@ const App: React.FC = () => {
     }
   };
 
-  const handleMarkOrderPrinted = async (orderId: string, currentStatus: string) => {
+  const handleMarkOrderPrinted = async (orderId: string, currentStatus: string, docPath?: string, vendorSlug?: string) => {
     const isCurrentlyDone = currentStatus === 'completed' || currentStatus === 'Printed' || currentStatus === 'COMPLETED';
     const nextStatus = isCurrentlyDone ? 'pending' : 'completed';
     const nextPrintedStatus = isCurrentlyDone ? 'Not Printed' : 'Printed';
     const nextPrintStatus = isCurrentlyDone ? 'QUEUED' : 'COMPLETED';
 
+    const updates = {
+      status: nextStatus,
+      printedStatus: nextPrintedStatus,
+      print_status: nextPrintStatus,
+      printed_at: !isCurrentlyDone ? new Date().toISOString() : null,
+    };
+
+    // 1. If explicit docPath is available (e.g. vendors/printeg/orders/1234), update it directly
+    if (docPath) {
+      try {
+        await updateDoc(doc(db, docPath), updates);
+      } catch (err) {
+        console.warn('Could not update order at docPath:', docPath, err);
+      }
+    }
+
+    // 2. Update root collection 'orders/{orderId}'
     try {
-      await updateDoc(doc(db, 'orders', orderId), {
-        status: nextStatus,
-        printedStatus: nextPrintedStatus,
-        print_status: nextPrintStatus,
-        printed_at: !isCurrentlyDone ? new Date().toISOString() : null,
-      });
+      await updateDoc(doc(db, 'orders', orderId), updates);
     } catch (err) {
-      console.error('Error updating order print status:', err);
+      // safe fallback if order doc only existed in vendor subcollection
+    }
+
+    // 3. Update vendor subcollection 'vendors/{slug}/orders/{orderId}'
+    const targetSlug = vendorSlug || selectedClient?.slug || selectedClient?.id;
+    if (targetSlug) {
+      try {
+        await updateDoc(doc(db, 'vendors', targetSlug, 'orders', orderId), updates);
+      } catch (err) {
+        // safe fallback
+      }
     }
   };
 
@@ -3456,7 +3562,7 @@ const App: React.FC = () => {
               ...fromCollection.filter(p => !nestedIds.has(p.id))
             ];
 
-            // Filter real-time Firestore orders specifically for this shop
+            // Filter real-time Firestore orders specifically for this shop (matching vendorSlug or subcollection docPath)
             const slug = selectedClient.slug || selectedClient.id;
             const shopRawOrders = allOrders.filter(order => {
               const isShopMatch =
@@ -3464,7 +3570,12 @@ const App: React.FC = () => {
                 order.vendorSlug === selectedClient.id ||
                 order.clientId === selectedClient.id ||
                 order.shopName === selectedClient.shopName ||
-                order.storeName === selectedClient.shopName;
+                order.storeName === selectedClient.shopName ||
+                (typeof order._docPath === 'string' && (
+                  order._docPath.startsWith(`vendors/${slug}/`) ||
+                  order._docPath.startsWith(`vendors/${selectedClient.id}/`) ||
+                  order._docPath.startsWith(`clients/${selectedClient.id}/`)
+                ));
               return isShopMatch;
             });
 
@@ -3562,7 +3673,7 @@ const App: React.FC = () => {
 
                         return (
                           <div
-                            key={order.id}
+                            key={order.id || order.orderCode}
                             className={`p-5 rounded-2xl border transition-all flex flex-col justify-between ${isDone ? 'bg-slate-50/70 border-slate-200' : 'bg-white border-amber-200 shadow-md shadow-amber-500/5 ring-1 ring-amber-300/50'}`}
                           >
                             <div>
@@ -3577,7 +3688,7 @@ const App: React.FC = () => {
                                     </span>
                                   </div>
                                   <span className="text-[11px] text-slate-400 block mt-0.5">
-                                    {order.createdAt || order.timestamp ? new Date(order.createdAt || order.timestamp).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' }) : 'Recent'}
+                                    {order.createdAt || order.timestamp || order.paid_at ? new Date(order.createdAt || order.timestamp || order.paid_at).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' }) : 'Recent'}
                                   </span>
                                 </div>
 
@@ -3632,7 +3743,7 @@ const App: React.FC = () => {
                               )}
 
                               <button
-                                onClick={() => handleMarkOrderPrinted(order.id, isDone ? 'completed' : 'pending')}
+                                onClick={() => handleMarkOrderPrinted(order.orderCode || order.id, isDone ? 'completed' : 'pending', order._docPath, order.vendorSlug || slug)}
                                 className={`px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-1 transition-colors ${isDone ? 'bg-slate-100 text-slate-600 hover:bg-slate-200' : 'bg-emerald-600 hover:bg-emerald-700 text-white'}`}
                                 title={isDone ? 'Re-open Order' : 'Mark as Printed'}
                               >
