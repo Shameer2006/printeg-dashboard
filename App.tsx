@@ -47,7 +47,7 @@ import { StatCard } from './components/StatCard';
 import { ClientCard } from './components/ClientCard';
 import { Client, StatusType, PrintPrices, VendorPricing, PriceTier, PageRangeTier, BindingPricing, BindingItemConfig, SpiralRangeTier } from './types';
 import { db } from './src/lib/firebase';
-import { collection, onSnapshot, query, addDoc, deleteDoc, updateDoc, doc, setDoc } from 'firebase/firestore';
+import { collection, onSnapshot, query, addDoc, deleteDoc, updateDoc, doc, setDoc, getDocs, where } from 'firebase/firestore';
 
 const DEFAULT_SINGLE_SIDE_TIERS: PageRangeTier[] = [
   { id: '1', minPages: 1, maxPages: 10, rate: 1.5 },
@@ -1109,16 +1109,42 @@ const App: React.FC = () => {
       try {
         const clientObj = clients.find(c => c.id === clientToDelete);
         const slug = clientObj?.slug || clientObj?.id || clientToDelete;
+        const shopName = clientObj?.shopName || '';
+        const phone = clientObj?.phoneNumber || (clientObj as any)?.phone || '';
 
         // 1. Delete from clients collection
         await deleteDoc(doc(db, 'clients', clientToDelete));
 
-        // 2. Delete from vendors collection as well
-        if (slug) {
-          await deleteDoc(doc(db, 'vendors', slug));
+        // 2. Identify all vendor document IDs to delete
+        const vendorDocIdsToDelete = new Set<string>();
+        if (slug) vendorDocIdsToDelete.add(slug);
+        if (clientToDelete) vendorDocIdsToDelete.add(clientToDelete);
+
+        // 3. Scan vendors collection for any matching documents (by slug, clientId, or storeName)
+        try {
+          const vendorsSnap = await getDocs(collection(db, 'vendors'));
+          vendorsSnap.forEach((vDoc) => {
+            const data = vDoc.data();
+            const matchesSlug = slug && (vDoc.id === slug || data.slug === slug);
+            const matchesClientId = clientToDelete && (vDoc.id === clientToDelete || data.id === clientToDelete || data.clientId === clientToDelete);
+            const matchesStoreName = shopName && (data.storeName === shopName || data.shopName === shopName);
+            const matchesPhone = phone && (data.phone === phone || data.phoneNumber === phone);
+
+            if (matchesSlug || matchesClientId || (matchesStoreName && matchesPhone)) {
+              vendorDocIdsToDelete.add(vDoc.id);
+            }
+          });
+        } catch (queryErr) {
+          console.warn('Could not scan vendors collection, proceeding with direct keys:', queryErr);
         }
-        if (clientToDelete !== slug) {
-          await deleteDoc(doc(db, 'vendors', clientToDelete));
+
+        // 4. Delete all matching vendor documents
+        for (const vId of vendorDocIdsToDelete) {
+          try {
+            await deleteDoc(doc(db, 'vendors', vId));
+          } catch (vErr) {
+            console.error(`Error deleting vendor doc ${vId}:`, vErr);
+          }
         }
 
         if (selectedClient?.id === clientToDelete) {
