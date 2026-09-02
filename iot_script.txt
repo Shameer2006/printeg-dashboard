@@ -173,9 +173,17 @@ def verify_code():
     display_message("Verifying...", current_code)
     
     try:
-        # Direct lookup - fast and cheap
-        doc_ref = db.collection('orders').document(current_code)
+        # Direct lookup in shop's order subcollection
+        doc_ref = db.collection('vendors').document(SHOP_ID).collection('orders').document(current_code)
         doc = doc_ref.get()
+        
+        # Fallback to global orders collection if not found in vendor subcollection
+        if not doc.exists:
+            fallback_ref = db.collection('orders').document(current_code)
+            fallback_doc = fallback_ref.get()
+            if fallback_doc.exists:
+                doc_ref = fallback_ref
+                doc = fallback_doc
         
         if doc.exists:
             data = doc.to_dict()

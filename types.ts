@@ -38,11 +38,47 @@ export interface PrintPrices {
   twoInOne: { bw: number; color: number };
 }
 
+export interface PriceTier {
+  id?: string;
+  minPages: number;         // e.g., 1
+  maxPages: number | null;  // e.g., 10 (null for 41+)
+  bwRate: number;           // Single side B&W (₹)
+  doubleSidedRate: number;  // Double sided B&W (₹)
+  colorRate?: number;       // Color (₹)
+}
+
+export interface SpiralRangeTier {
+  id?: string;
+  minSheets: number;        // e.g. 1
+  maxSheets: number | null; // e.g. 49 (null for 81+)
+  price: number;            // e.g. 20
+}
+
+export interface BindingItemConfig {
+  id: string;               // 'spiral' | 'soft' | 'calico' | 'chart' | custom
+  name: string;             // e.g. 'Spiral Binding'
+  description?: string;     // e.g. 'Plastic coil with transparent protective covers'
+  enabled: boolean;         // Shopkeeper can turn ON/OFF to add/remove
+  type: 'tiered' | 'flat' | 'with_without_print';
+  tiers?: SpiralRangeTier[]; // For 'tiered' (Spiral)
+  flatPrice?: number;       // For 'flat' (Soft)
+  withPrintPrice?: number;  // For 'with_without_print' (Calico, Chart)
+  withoutPrintPrice?: number;// For 'with_without_print' (Calico, Chart)
+}
+
+export interface BindingPricing {
+  enabled: boolean;         // Global toggle for store binding services
+  items: BindingItemConfig[];
+}
+
 export interface VendorPricing {
-  bw: number;          // B&W Single Sided (Xerox)
-  doubleSided: number; // B&W Double Sided
-  color: number;       // Color Print
-  a4Sheet: number;     // Blank A4 Sheet
+  bw: number;               // B&W Single Sided (Xerox)
+  doubleSided: number;      // B&W Double Sided
+  color: number;            // Color Print
+  a4Sheet: number;          // Blank A4 Sheet
+  enableTiers?: boolean;    // Whether range-based tiered pricing is enabled
+  tiers?: PriceTier[];      // Range-based pricing tiers
+  binding?: BindingPricing; // Fully customizable binding configuration
 }
 
 export interface MerchantCredentials {

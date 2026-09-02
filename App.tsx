@@ -37,15 +37,67 @@ import {
   Check,
   ExternalLink,
   Wallet,
-  TrendingUp
+  TrendingUp,
+  BookOpen,
+  Sparkles
 } from 'lucide-react';
 import { QRCodeCanvas } from 'qrcode.react';
 import { Sidebar } from './components/Sidebar';
 import { StatCard } from './components/StatCard';
 import { ClientCard } from './components/ClientCard';
-import { Client, StatusType, PrintPrices, VendorPricing } from './types';
+import { Client, StatusType, PrintPrices, VendorPricing, PriceTier, BindingPricing, BindingItemConfig, SpiralRangeTier } from './types';
 import { db } from './src/lib/firebase';
 import { collection, onSnapshot, query, addDoc, deleteDoc, updateDoc, doc, setDoc } from 'firebase/firestore';
+
+const DEFAULT_PRICE_TIERS: PriceTier[] = [
+  { id: '1', minPages: 1, maxPages: 10, bwRate: 1.5, doubleSidedRate: 2.0, colorRate: 10.0 },
+  { id: '2', minPages: 11, maxPages: 40, bwRate: 1.2, doubleSidedRate: 1.8, colorRate: 8.0 },
+  { id: '3', minPages: 41, maxPages: null, bwRate: 1.0, doubleSidedRate: 1.5, colorRate: 6.0 },
+];
+
+const DEFAULT_BINDING_CONFIG: BindingPricing = {
+  enabled: true,
+  items: [
+    {
+      id: 'spiral',
+      name: 'Spiral Binding',
+      description: 'Plastic coil with transparent protective front & back covers',
+      enabled: true,
+      type: 'tiered',
+      tiers: [
+        { id: '1', minSheets: 1, maxSheets: 49, price: 20 },
+        { id: '2', minSheets: 50, maxSheets: 80, price: 25 },
+        { id: '3', minSheets: 81, maxSheets: null, price: 30 },
+      ],
+    },
+    {
+      id: 'soft',
+      name: 'Soft Binding',
+      description: 'Booklet / thermal softcover wrap binding',
+      enabled: true,
+      type: 'flat',
+      flatPrice: 15,
+    },
+    {
+      id: 'calico',
+      name: 'Calico Binding',
+      description: 'Hardcover cloth binding with gold lettering',
+      enabled: true,
+      type: 'with_without_print',
+      withPrintPrice: 40,
+      withoutPrintPrice: 30,
+    },
+    {
+      id: 'chart',
+      name: 'Chart Bind',
+      description: 'Thick chart paper binding with strip',
+      enabled: true,
+      type: 'with_without_print',
+      withPrintPrice: 30,
+      withoutPrintPrice: 25,
+    },
+  ],
+};
 
 // Define the number of items to display per page for pagination
 const ITEMS_PER_PAGE = 5;
@@ -405,6 +457,8 @@ const App: React.FC = () => {
     doubleSided: 2.0,
     color: 10.0,
     a4Sheet: 1.0,
+    enableTiers: true,
+    tiers: DEFAULT_PRICE_TIERS,
   });
   const [showPricingDetails, setShowPricingDetails] = useState(true);
   const [shopInfo, setShopInfo] = useState('');
@@ -840,6 +894,13 @@ const App: React.FC = () => {
       doubleSided: parseFloat(String(onboardDouble)) || 2.0,
       color: parseFloat(String(onboardColor)) || 10.0,
       a4Sheet: parseFloat(String(onboardA4)) || 1.0,
+      enableTiers: true,
+      tiers: [
+        { id: '1', minPages: 1, maxPages: 10, bwRate: parseFloat(String(onboardBw)) || 1.5, doubleSidedRate: parseFloat(String(onboardDouble)) || 2.0, colorRate: parseFloat(String(onboardColor)) || 10.0 },
+        { id: '2', minPages: 11, maxPages: 40, bwRate: Math.max(0.5, (parseFloat(String(onboardBw)) || 1.5) - 0.3), doubleSidedRate: Math.max(1, (parseFloat(String(onboardDouble)) || 2.0) - 0.2), colorRate: Math.max(2, (parseFloat(String(onboardColor)) || 10.0) - 2) },
+        { id: '3', minPages: 41, maxPages: null, bwRate: Math.max(0.5, (parseFloat(String(onboardBw)) || 1.5) - 0.5), doubleSidedRate: Math.max(1, (parseFloat(String(onboardDouble)) || 2.0) - 0.5), colorRate: Math.max(2, (parseFloat(String(onboardColor)) || 10.0) - 4) },
+      ],
+      binding: DEFAULT_BINDING_CONFIG,
     };
 
     const finalMerchantUsername = (merchantUsername || cleanSlug.replace(/-/g, '_')).toLowerCase().trim();
@@ -1066,11 +1127,23 @@ const App: React.FC = () => {
   };
 
   const handleOpenShopSettings = () => {
-    const currentPricing = selectedClient?.pricing || {
-      bw: selectedClient?.printingPrices?.singleSide?.bw || 1.5,
-      doubleSided: selectedClient?.printingPrices?.doubleSide?.bw || 2.0,
-      color: selectedClient?.printingPrices?.singleSide?.color || 10.0,
-      a4Sheet: 1.0,
+    const rawPricing = selectedClient?.pricing;
+    const initialTiers: PriceTier[] = rawPricing?.tiers && rawPricing.tiers.length > 0
+      ? rawPricing.tiers
+      : [
+          { id: '1', minPages: 1, maxPages: 10, bwRate: rawPricing?.bw || 1.5, doubleSidedRate: rawPricing?.doubleSided || 2.0, colorRate: rawPricing?.color || 10.0 },
+          { id: '2', minPages: 11, maxPages: 40, bwRate: Math.max(0.5, (rawPricing?.bw || 1.5) - 0.3), doubleSidedRate: Math.max(1, (rawPricing?.doubleSided || 2.0) - 0.2), colorRate: Math.max(2, (rawPricing?.color || 10.0) - 2) },
+          { id: '3', minPages: 41, maxPages: null, bwRate: Math.max(0.5, (rawPricing?.bw || 1.5) - 0.5), doubleSidedRate: Math.max(1, (rawPricing?.doubleSided || 2.0) - 0.5), colorRate: Math.max(2, (rawPricing?.color || 10.0) - 4) },
+        ];
+
+    const currentPricing: VendorPricing = {
+      bw: rawPricing?.bw || selectedClient?.printingPrices?.singleSide?.bw || 1.5,
+      doubleSided: rawPricing?.doubleSided || selectedClient?.printingPrices?.doubleSide?.bw || 2.0,
+      color: rawPricing?.color || selectedClient?.printingPrices?.singleSide?.color || 10.0,
+      a4Sheet: rawPricing?.a4Sheet || 1.0,
+      enableTiers: rawPricing?.enableTiers !== undefined ? rawPricing.enableTiers : true,
+      tiers: initialTiers,
+      binding: rawPricing?.binding || DEFAULT_BINDING_CONFIG,
     };
     setVendorPricing(currentPricing);
     setPrintingPrices(selectedClient?.printingPrices || defaultPrices);
@@ -1078,6 +1151,153 @@ const App: React.FC = () => {
     setShopInfo(selectedClient?.shopInfo || '');
     setCustomWebsiteName(selectedClient?.customWebsiteName || selectedClient?.shopName || '');
     setShowShopSettingsModal(true);
+  };
+
+  const handleToggleBindingGlobal = (enabled: boolean) => {
+    const currentBinding = vendorPricing.binding || DEFAULT_BINDING_CONFIG;
+    setVendorPricing({
+      ...vendorPricing,
+      binding: { ...currentBinding, enabled },
+    });
+  };
+
+  const handleToggleBindingItem = (itemId: string, enabled: boolean) => {
+    const currentBinding = vendorPricing.binding || DEFAULT_BINDING_CONFIG;
+    const items = (currentBinding.items || []).map((item) =>
+      item.id === itemId ? { ...item, enabled } : item
+    );
+    setVendorPricing({
+      ...vendorPricing,
+      binding: { ...currentBinding, items },
+    });
+  };
+
+  const handleUpdateBindingItem = (itemId: string, updates: Partial<BindingItemConfig>) => {
+    const currentBinding = vendorPricing.binding || DEFAULT_BINDING_CONFIG;
+    const items = (currentBinding.items || []).map((item) =>
+      item.id === itemId ? { ...item, ...updates } : item
+    );
+    setVendorPricing({
+      ...vendorPricing,
+      binding: { ...currentBinding, items },
+    });
+  };
+
+  const handleUpdateSpiralTier = (tierIndex: number, field: keyof SpiralRangeTier, value: any) => {
+    const currentBinding = vendorPricing.binding || DEFAULT_BINDING_CONFIG;
+    const spiralItem = (currentBinding.items || []).find((i) => i.id === 'spiral');
+    if (!spiralItem || !spiralItem.tiers) return;
+    const tiers = [...spiralItem.tiers];
+    tiers[tierIndex] = { ...tiers[tierIndex], [field]: value };
+    handleUpdateBindingItem('spiral', { tiers });
+  };
+
+  const handleAddSpiralTier = () => {
+    const currentBinding = vendorPricing.binding || DEFAULT_BINDING_CONFIG;
+    const spiralItem = (currentBinding.items || []).find((i) => i.id === 'spiral');
+    const tiers = spiralItem?.tiers ? [...spiralItem.tiers] : [];
+    const lastTier = tiers[tiers.length - 1];
+    const newMin = lastTier && lastTier.maxSheets ? lastTier.maxSheets + 1 : 1;
+    if (lastTier && lastTier.maxSheets === null) {
+      tiers[tiers.length - 1] = { ...lastTier, maxSheets: newMin - 1 };
+    }
+    tiers.push({
+      id: String(Date.now()),
+      minSheets: newMin,
+      maxSheets: null,
+      price: (lastTier?.price || 25) + 5,
+    });
+    handleUpdateBindingItem('spiral', { tiers });
+  };
+
+  const handleDeleteSpiralTier = (tierIndex: number) => {
+    const currentBinding = vendorPricing.binding || DEFAULT_BINDING_CONFIG;
+    const spiralItem = (currentBinding.items || []).find((i) => i.id === 'spiral');
+    if (!spiralItem || !spiralItem.tiers) return;
+    const tiers = spiralItem.tiers.filter((_, i) => i !== tierIndex);
+    handleUpdateBindingItem('spiral', { tiers });
+  };
+
+  const handleAddCustomBinding = () => {
+    const currentBinding = vendorPricing.binding || DEFAULT_BINDING_CONFIG;
+    const newId = `custom_${Date.now()}`;
+    const newItem: BindingItemConfig = {
+      id: newId,
+      name: 'New Custom Binding',
+      description: 'Custom binding service',
+      enabled: true,
+      type: 'flat',
+      flatPrice: 20,
+    };
+    setVendorPricing({
+      ...vendorPricing,
+      binding: {
+        ...currentBinding,
+        items: [...(currentBinding.items || []), newItem],
+      },
+    });
+  };
+
+  const handleDeleteCustomBinding = (itemId: string) => {
+    const currentBinding = vendorPricing.binding || DEFAULT_BINDING_CONFIG;
+    const items = (currentBinding.items || []).filter((i) => i.id !== itemId);
+    setVendorPricing({
+      ...vendorPricing,
+      binding: { ...currentBinding, items },
+    });
+  };
+
+  const handleAddTier = () => {
+    const currentTiers = vendorPricing.tiers || [];
+    const lastTier = currentTiers[currentTiers.length - 1];
+    const newMin = lastTier && lastTier.maxPages ? lastTier.maxPages + 1 : (lastTier ? lastTier.minPages + 10 : 1);
+    const newTier: PriceTier = {
+      id: String(Date.now()),
+      minPages: newMin,
+      maxPages: null,
+      bwRate: Math.max(0.5, (lastTier?.bwRate || vendorPricing.bw) - 0.2),
+      doubleSidedRate: Math.max(1, (lastTier?.doubleSidedRate || vendorPricing.doubleSided) - 0.2),
+      colorRate: Math.max(2, (lastTier?.colorRate || vendorPricing.color) - 1),
+    };
+    let updatedTiers = [...currentTiers];
+    if (lastTier && lastTier.maxPages === null) {
+      updatedTiers[updatedTiers.length - 1] = {
+        ...lastTier,
+        maxPages: newMin - 1
+      };
+    }
+    updatedTiers.push(newTier);
+    setVendorPricing({ ...vendorPricing, tiers: updatedTiers });
+  };
+
+  const handleUpdateTier = (index: number, field: keyof PriceTier, value: any) => {
+    const currentTiers = [...(vendorPricing.tiers || [])];
+    if (!currentTiers[index]) return;
+    currentTiers[index] = {
+      ...currentTiers[index],
+      [field]: value
+    };
+    setVendorPricing({ ...vendorPricing, tiers: currentTiers });
+  };
+
+  const handleDeleteTier = (index: number) => {
+    const currentTiers = (vendorPricing.tiers || []).filter((_, i) => i !== index);
+    setVendorPricing({ ...vendorPricing, tiers: currentTiers });
+  };
+
+  const handleResetStandardTiers = () => {
+    const baseBw = vendorPricing.bw || 1.5;
+    const baseDouble = vendorPricing.doubleSided || 2.0;
+    const baseColor = vendorPricing.color || 10.0;
+    setVendorPricing({
+      ...vendorPricing,
+      enableTiers: true,
+      tiers: [
+        { id: '1', minPages: 1, maxPages: 10, bwRate: baseBw, doubleSidedRate: baseDouble, colorRate: baseColor },
+        { id: '2', minPages: 11, maxPages: 40, bwRate: Math.max(0.5, baseBw - 0.3), doubleSidedRate: Math.max(1, baseDouble - 0.2), colorRate: Math.max(2, baseColor - 2) },
+        { id: '3', minPages: 41, maxPages: null, bwRate: Math.max(0.5, baseBw - 0.5), doubleSidedRate: Math.max(1, baseDouble - 0.5), colorRate: Math.max(2, baseColor - 4) },
+      ]
+    });
   };
 
   const handleSaveShopSettings = async (e: React.FormEvent) => {
@@ -1288,7 +1508,7 @@ const App: React.FC = () => {
       {showShopSettingsModal && selectedClient && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowShopSettingsModal(false)} />
-          <div className="relative bg-white w-full max-w-2xl rounded-3xl p-8 shadow-2xl animate-in zoom-in-95 duration-200 overflow-y-auto max-h-[90vh]">
+          <div className="relative bg-white w-full max-w-3xl rounded-3xl p-8 shadow-2xl animate-in zoom-in-95 duration-200 overflow-y-auto max-h-[90vh]">
             <button onClick={() => setShowShopSettingsModal(false)} className="absolute top-6 right-6 text-slate-400 hover:text-black">
               <X size={24} />
             </button>
@@ -1308,63 +1528,364 @@ const App: React.FC = () => {
                   </button>
 
                   {showPricingDetails && (
-                    <div className="mt-3 p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-4 animate-in fade-in zoom-in-95 duration-200">
-                      {/* B&W Single & Double */}
+                    <div className="mt-3 p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-5 animate-in fade-in zoom-in-95 duration-200">
+                      {/* Base Rates */}
                       <div>
-                        <label className="block text-[11px] font-bold text-slate-400 uppercase mb-2">Black & White (Xerox)</label>
-                        <div className="flex gap-3">
-                          <div className="flex-1">
-                            <span className="text-[10px] text-slate-500 mb-1 block">Single Side (₹)</span>
+                        <div className="flex items-center justify-between mb-2">
+                          <label className="block text-[11px] font-bold text-slate-400 uppercase">Standard / Base Rates</label>
+                        </div>
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                          <div>
+                            <span className="text-[10px] text-slate-500 mb-1 block font-medium">B&W Single (₹)</span>
                             <input
                               type="number"
                               min="0"
                               step="0.5"
-                              className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg outline-none text-sm focus:ring-2 focus:ring-black font-semibold"
+                              className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg outline-none text-xs focus:ring-2 focus:ring-black font-semibold text-center"
                               value={vendorPricing.bw}
                               onChange={(e) => setVendorPricing({ ...vendorPricing, bw: parseFloat(e.target.value) || 0 })}
                             />
                           </div>
-                          <div className="flex-1">
-                            <span className="text-[10px] text-slate-500 mb-1 block">Double Sided (₹)</span>
+                          <div>
+                            <span className="text-[10px] text-slate-500 mb-1 block font-medium">B&W Double (₹)</span>
                             <input
                               type="number"
                               min="0"
                               step="0.5"
-                              className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg outline-none text-sm focus:ring-2 focus:ring-black font-semibold"
+                              className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg outline-none text-xs focus:ring-2 focus:ring-black font-semibold text-center"
                               value={vendorPricing.doubleSided}
                               onChange={(e) => setVendorPricing({ ...vendorPricing, doubleSided: parseFloat(e.target.value) || 0 })}
                             />
                           </div>
-                        </div>
-                      </div>
-
-                      {/* Color & Blank A4 Sheets */}
-                      <div>
-                        <label className="block text-[11px] font-bold text-slate-400 uppercase mb-2">Color & Paper Sheets</label>
-                        <div className="flex gap-3">
-                          <div className="flex-1">
-                            <span className="text-[10px] text-slate-500 mb-1 block">Color Print (₹)</span>
+                          <div>
+                            <span className="text-[10px] text-slate-500 mb-1 block font-medium">Color Print (₹)</span>
                             <input
                               type="number"
                               min="0"
                               step="0.5"
-                              className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg outline-none text-sm focus:ring-2 focus:ring-black font-semibold"
+                              className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg outline-none text-xs focus:ring-2 focus:ring-black font-semibold text-center"
                               value={vendorPricing.color}
                               onChange={(e) => setVendorPricing({ ...vendorPricing, color: parseFloat(e.target.value) || 0 })}
                             />
                           </div>
-                          <div className="flex-1">
-                            <span className="text-[10px] text-slate-500 mb-1 block">Blank A4 Sheet (₹)</span>
+                          <div>
+                            <span className="text-[10px] text-slate-500 mb-1 block font-medium">Blank A4 (₹)</span>
                             <input
                               type="number"
                               min="0"
                               step="0.5"
-                              className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg outline-none text-sm focus:ring-2 focus:ring-black font-semibold"
+                              className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg outline-none text-xs focus:ring-2 focus:ring-black font-semibold text-center"
                               value={vendorPricing.a4Sheet}
                               onChange={(e) => setVendorPricing({ ...vendorPricing, a4Sheet: parseFloat(e.target.value) || 0 })}
                             />
                           </div>
                         </div>
+                      </div>
+
+                      {/* Tiered / Range-based Volume Pricing */}
+                      <div className="pt-3 border-t border-slate-200">
+                        <div className="flex items-center justify-between mb-2">
+                          <div>
+                            <span className="text-xs font-bold text-slate-800 block">Page Range / Volume Pricing</span>
+                            <span className="text-[10px] text-slate-500">Auto-discounts rate per page based on total order pages</span>
+                          </div>
+                          <label className="relative inline-flex items-center cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={vendorPricing.enableTiers !== false}
+                              onChange={(e) => setVendorPricing({ ...vendorPricing, enableTiers: e.target.checked })}
+                              className="sr-only peer"
+                            />
+                            <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-600"></div>
+                          </label>
+                        </div>
+
+                        {vendorPricing.enableTiers !== false && (
+                          <div className="space-y-3 mt-3">
+                            {(vendorPricing.tiers || []).map((tier, idx) => (
+                              <div key={tier.id || idx} className="p-3.5 bg-white rounded-xl border border-slate-200 shadow-sm space-y-2.5">
+                                <div className="flex items-center justify-between pb-1.5 border-b border-slate-100">
+                                  <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                                    <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                                    Tier {idx + 1}: {tier.maxPages ? `${tier.minPages} to ${tier.maxPages} pages` : `${tier.minPages}+ pages (Bulk)`}
+                                  </span>
+                                  {(vendorPricing.tiers || []).length > 1 && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleDeleteTier(idx)}
+                                      className="text-rose-500 hover:text-rose-700 p-1 rounded-lg hover:bg-rose-50 transition-colors"
+                                      title="Delete Tier"
+                                    >
+                                      <Trash2 size={13} />
+                                    </button>
+                                  )}
+                                </div>
+
+                                {/* Row 1: Page Range */}
+                                <div className="grid grid-cols-2 gap-3">
+                                  <div>
+                                    <span className="text-[10px] text-slate-500 font-bold uppercase block mb-1">From (Min Pages)</span>
+                                    <input
+                                      type="number"
+                                      min="1"
+                                      className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg font-bold text-xs outline-none focus:ring-1 focus:ring-black text-center"
+                                      value={tier.minPages}
+                                      onChange={(e) => handleUpdateTier(idx, 'minPages', parseInt(e.target.value) || 1)}
+                                    />
+                                  </div>
+                                  <div>
+                                    <span className="text-[10px] text-slate-500 font-bold uppercase block mb-1">To (Max Pages)</span>
+                                    <input
+                                      type="text"
+                                      placeholder="No Limit (+)"
+                                      className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg font-bold text-xs outline-none focus:ring-1 focus:ring-black text-center"
+                                      value={tier.maxPages === null ? '' : (tier.maxPages ?? '')}
+                                      onChange={(e) => {
+                                        const val = e.target.value.trim();
+                                        handleUpdateTier(idx, 'maxPages', val === '' ? null : (parseInt(val) || null));
+                                      }}
+                                    />
+                                  </div>
+                                </div>
+
+                                {/* Row 2: Rates per Sheet */}
+                                <div className="grid grid-cols-3 gap-2.5 pt-1">
+                                  <div>
+                                    <span className="text-[10px] text-slate-500 font-bold uppercase block mb-1">Single (₹)</span>
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      step="0.1"
+                                      className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg font-bold text-xs outline-none focus:ring-1 focus:ring-black text-center"
+                                      value={tier.bwRate}
+                                      onChange={(e) => handleUpdateTier(idx, 'bwRate', parseFloat(e.target.value) || 0)}
+                                    />
+                                  </div>
+                                  <div>
+                                    <span className="text-[10px] text-slate-500 font-bold uppercase block mb-1">Double (₹)</span>
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      step="0.1"
+                                      className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg font-bold text-xs outline-none focus:ring-1 focus:ring-black text-center"
+                                      value={tier.doubleSidedRate}
+                                      onChange={(e) => handleUpdateTier(idx, 'doubleSidedRate', parseFloat(e.target.value) || 0)}
+                                    />
+                                  </div>
+                                  <div>
+                                    <span className="text-[10px] text-slate-500 font-bold uppercase block mb-1">Color (₹)</span>
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      step="0.5"
+                                      className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg font-bold text-xs outline-none focus:ring-1 focus:ring-black text-center"
+                                      value={tier.colorRate ?? vendorPricing.color}
+                                      onChange={(e) => handleUpdateTier(idx, 'colorRate', parseFloat(e.target.value) || 0)}
+                                    />
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+
+                            <div className="flex gap-2 pt-1">
+                              <button
+                                type="button"
+                                onClick={handleAddTier}
+                                className="flex-1 py-2 px-3 bg-white border border-dashed border-slate-300 hover:border-slate-400 hover:bg-slate-50 text-slate-700 text-xs font-bold rounded-xl flex items-center justify-center gap-1.5 transition-colors"
+                              >
+                                <Plus size={13} /> Add Page Range Tier
+                              </button>
+                              <button
+                                type="button"
+                                onClick={handleResetStandardTiers}
+                                className="py-2 px-3 bg-slate-100 hover:bg-slate-200 text-slate-600 text-[11px] font-medium rounded-xl transition-colors"
+                              >
+                                Reset Standard
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Book Binding & Finishing Services Editor */}
+                      <div className="pt-3 border-t border-slate-200">
+                        <div className="flex items-center justify-between mb-2">
+                          <div>
+                            <span className="text-xs font-bold text-slate-800 block">Book Binding &amp; Finishing Services</span>
+                            <span className="text-[10px] text-slate-500">Shopkeeper can toggle ON/OFF, add, remove, and adjust prices</span>
+                          </div>
+                          <label className="relative inline-flex items-center cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={vendorPricing.binding?.enabled !== false}
+                              onChange={(e) => handleToggleBindingGlobal(e.target.checked)}
+                              className="sr-only peer"
+                            />
+                            <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-600"></div>
+                          </label>
+                        </div>
+
+                        {vendorPricing.binding?.enabled !== false && (
+                          <div className="space-y-3 mt-3">
+                            {(vendorPricing.binding?.items || DEFAULT_BINDING_CONFIG.items).map((item) => (
+                              <div
+                                key={item.id}
+                                className={`p-3.5 rounded-xl border transition-all space-y-3 ${
+                                  item.enabled ? 'bg-white border-slate-200 shadow-sm' : 'bg-slate-100/70 border-slate-200 opacity-60'
+                                }`}
+                              >
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center gap-2">
+                                    <span className={`w-2 h-2 rounded-full ${item.enabled ? 'bg-emerald-500' : 'bg-slate-400'}`} />
+                                    <div>
+                                      <span className="text-xs font-bold text-slate-900 block">{item.name}</span>
+                                      <span className="text-[10px] text-slate-500">{item.description}</span>
+                                    </div>
+                                  </div>
+
+                                  <div className="flex items-center gap-2">
+                                    {item.id.startsWith('custom_') && (
+                                      <button
+                                        type="button"
+                                        onClick={() => handleDeleteCustomBinding(item.id)}
+                                        className="text-rose-500 hover:text-rose-700 p-1"
+                                        title="Delete custom binding"
+                                      >
+                                        <Trash2 size={13} />
+                                      </button>
+                                    )}
+                                    <label className="relative inline-flex items-center cursor-pointer">
+                                      <input
+                                        type="checkbox"
+                                        checked={item.enabled}
+                                        onChange={(e) => handleToggleBindingItem(item.id, e.target.checked)}
+                                        className="sr-only peer"
+                                      />
+                                      <div className="w-8 h-4 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-emerald-600"></div>
+                                    </label>
+                                  </div>
+                                </div>
+
+                                {item.enabled && (
+                                  <div className="pt-2 border-t border-slate-100">
+                                    {/* Flat Type (e.g. Soft Binding) */}
+                                    {item.type === 'flat' && (
+                                      <div className="flex items-center justify-between">
+                                        <span className="text-xs text-slate-600 font-medium">Flat Rate Price:</span>
+                                        <div className="flex items-center gap-1">
+                                          <span className="text-xs text-slate-400 font-bold">₹</span>
+                                          <input
+                                            type="number"
+                                            min="0"
+                                            step="1"
+                                            className="w-24 px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg font-bold text-xs outline-none focus:ring-1 focus:ring-black text-center"
+                                            value={item.flatPrice ?? 15}
+                                            onChange={(e) => handleUpdateBindingItem(item.id, { flatPrice: parseFloat(e.target.value) || 0 })}
+                                          />
+                                        </div>
+                                      </div>
+                                    )}
+
+                                    {/* With / Without Print (e.g. Calico, Chart) */}
+                                    {item.type === 'with_without_print' && (
+                                      <div className="grid grid-cols-2 gap-3">
+                                        <div>
+                                          <span className="text-[10px] text-slate-500 font-bold uppercase block mb-1">With Cover Print (₹)</span>
+                                          <input
+                                            type="number"
+                                            min="0"
+                                            step="1"
+                                            className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg font-bold text-xs outline-none focus:ring-1 focus:ring-black text-center"
+                                            value={item.withPrintPrice ?? (item.id === 'calico' ? 40 : 30)}
+                                            onChange={(e) => handleUpdateBindingItem(item.id, { withPrintPrice: parseFloat(e.target.value) || 0 })}
+                                          />
+                                        </div>
+                                        <div>
+                                          <span className="text-[10px] text-slate-500 font-bold uppercase block mb-1">Without Print (₹)</span>
+                                          <input
+                                            type="number"
+                                            min="0"
+                                            step="1"
+                                            className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg font-bold text-xs outline-none focus:ring-1 focus:ring-black text-center"
+                                            value={item.withoutPrintPrice ?? (item.id === 'calico' ? 30 : 25)}
+                                            onChange={(e) => handleUpdateBindingItem(item.id, { withoutPrintPrice: parseFloat(e.target.value) || 0 })}
+                                          />
+                                        </div>
+                                      </div>
+                                    )}
+
+                                    {/* Tiered Range (e.g. Spiral Binding) */}
+                                    {item.type === 'tiered' && (
+                                      <div className="space-y-2">
+                                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Sheet Range Tiers</span>
+                                        {(item.tiers || []).map((t, tIdx) => (
+                                          <div key={t.id || tIdx} className="flex items-center gap-2 bg-slate-50 p-2 rounded-lg border border-slate-200/80">
+                                            <div className="flex-1 flex items-center gap-1.5">
+                                              <input
+                                                type="number"
+                                                min="1"
+                                                className="w-16 px-1.5 py-1 bg-white border border-slate-200 rounded text-center text-xs font-bold"
+                                                value={t.minSheets}
+                                                onChange={(e) => handleUpdateSpiralTier(tIdx, 'minSheets', parseInt(e.target.value) || 1)}
+                                              />
+                                              <span className="text-xs text-slate-400">to</span>
+                                              <input
+                                                type="text"
+                                                placeholder="Max (+)"
+                                                className="w-16 px-1.5 py-1 bg-white border border-slate-200 rounded text-center text-xs font-bold"
+                                                value={t.maxSheets === null ? '' : (t.maxSheets ?? '')}
+                                                onChange={(e) => {
+                                                  const val = e.target.value.trim();
+                                                  handleUpdateSpiralTier(tIdx, 'maxSheets', val === '' ? null : (parseInt(val) || null));
+                                                }}
+                                              />
+                                              <span className="text-[10px] text-slate-500">sheets</span>
+                                            </div>
+                                            <div className="flex items-center gap-1">
+                                              <span className="text-xs font-bold text-slate-400">₹</span>
+                                              <input
+                                                type="number"
+                                                min="0"
+                                                step="1"
+                                                className="w-14 px-1.5 py-1 bg-white border border-slate-200 rounded text-center text-xs font-bold"
+                                                value={t.price}
+                                                onChange={(e) => handleUpdateSpiralTier(tIdx, 'price', parseFloat(e.target.value) || 0)}
+                                              />
+                                            </div>
+                                            {(item.tiers || []).length > 1 && (
+                                              <button
+                                                type="button"
+                                                onClick={() => handleDeleteSpiralTier(tIdx)}
+                                                className="text-rose-500 hover:text-rose-700 p-1"
+                                              >
+                                                <Trash2 size={12} />
+                                              </button>
+                                            )}
+                                          </div>
+                                        ))}
+                                        <button
+                                          type="button"
+                                          onClick={handleAddSpiralTier}
+                                          className="w-full py-1.5 bg-white border border-dashed border-slate-300 hover:border-slate-400 text-slate-600 text-xs font-bold rounded-lg flex items-center justify-center gap-1 transition-colors mt-1"
+                                        >
+                                          <Plus size={12} /> Add Spiral Tier
+                                        </button>
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+
+                            <button
+                              type="button"
+                              onClick={handleAddCustomBinding}
+                              className="w-full py-2 bg-white border border-dashed border-slate-300 hover:border-slate-400 text-slate-700 text-xs font-bold rounded-xl flex items-center justify-center gap-1.5 transition-colors"
+                            >
+                              <Plus size={13} /> Add Custom Binding Service
+                            </button>
+                          </div>
+                        )}
                       </div>
                     </div>
                   )}
@@ -2529,6 +3050,15 @@ const App: React.FC = () => {
                                     {order.totalPages || order.pages || 1} pgs • {order.isColor ? 'Color' : 'B&W'} • {order.printSide === 'double' ? '2-Sided' : '1-Sided'} ({order.copies || 1}x)
                                   </span>
                                 </div>
+                                {order.bindingId && order.bindingId !== 'none' && (
+                                  <div className="flex justify-between items-center bg-indigo-50/80 px-2.5 py-1.5 rounded-lg text-indigo-950 border border-indigo-100">
+                                    <span className="font-medium text-[11px] text-indigo-700">Binding:</span>
+                                    <span className="font-bold text-[11px] flex items-center gap-1">
+                                      📘 {order.bindingName || 'Binding'}{order.bindingOption === 'with_print' ? ' (With Print)' : order.bindingOption === 'without_print' ? ' (No Print)' : ''}
+                                      <span className="text-emerald-700 font-black">(+₹{order.bindingPrice || 0})</span>
+                                    </span>
+                                  </div>
+                                )}
                                 <div className="flex justify-between pt-1 border-t border-slate-200/60">
                                   <span className="text-slate-500">Shop Net Credit:</span>
                                   <span className="font-black text-emerald-700 text-sm">₹{shopEarnings.toFixed(2)}</span>
@@ -2602,6 +3132,91 @@ const App: React.FC = () => {
                       <span className="text-2xl font-black text-slate-900">₹{(pricing.a4Sheet || 1.0).toFixed(2)}</span>
                     </div>
                   </div>
+
+                  {pricing.enableTiers !== false && pricing.tiers && pricing.tiers.length > 0 && (
+                    <div className="mt-5 pt-5 border-t border-slate-100">
+                      <div className="flex items-center justify-between mb-3">
+                        <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">Page Range Volume Rates</span>
+                        <span className="text-[10px] text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full font-bold border border-emerald-200">
+                          Tier Discounts Active
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        {pricing.tiers.map((tier, idx) => (
+                          <div key={idx} className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200 text-xs">
+                            <div className="flex items-center justify-between font-bold text-slate-900 mb-2 pb-1.5 border-b border-slate-200/60">
+                              <span>Tier {idx + 1}</span>
+                              <span className="bg-white px-2 py-0.5 rounded-md border border-slate-200 font-mono text-[11px]">
+                                {tier.maxPages ? `${tier.minPages}–${tier.maxPages} pgs` : `${tier.minPages}+ pgs`}
+                              </span>
+                            </div>
+                            <div className="space-y-1 text-slate-600">
+                              <div className="flex justify-between">
+                                <span>Single Sided:</span>
+                                <span className="font-bold text-slate-900">₹{tier.bwRate.toFixed(2)}/pg</span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span>Double Sided:</span>
+                                <span className="font-bold text-slate-900">₹{tier.doubleSidedRate.toFixed(2)}/pg</span>
+                              </div>
+                              {tier.colorRate !== undefined && (
+                                <div className="flex justify-between">
+                                  <span>Color:</span>
+                                  <span className="font-bold text-slate-900">₹{tier.colorRate.toFixed(2)}/pg</span>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {pricing.binding?.enabled !== false && pricing.binding?.items && (
+                    <div className="mt-5 pt-5 border-t border-slate-100">
+                      <div className="flex items-center justify-between mb-3">
+                        <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">Binding &amp; Finishing Rates</span>
+                        <span className="text-[10px] text-indigo-700 bg-indigo-50 px-2.5 py-1 rounded-full font-bold border border-indigo-200">
+                          {pricing.binding.items.filter(i => i.enabled).length} Services Active
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                        {pricing.binding.items.filter(i => i.enabled).map((bItem) => (
+                          <div key={bItem.id} className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200 text-xs">
+                            <div className="flex items-center justify-between font-bold text-slate-900 mb-1.5 pb-1 border-b border-slate-200/60">
+                              <span>{bItem.name}</span>
+                            </div>
+                            <div className="space-y-1 text-slate-600">
+                              {bItem.type === 'flat' && (
+                                <div className="flex justify-between font-bold text-slate-900">
+                                  <span>Flat Rate:</span>
+                                  <span>₹{bItem.flatPrice || 0}</span>
+                                </div>
+                              )}
+                              {bItem.type === 'with_without_print' && (
+                                <>
+                                  <div className="flex justify-between">
+                                    <span>With Print:</span>
+                                    <span className="font-bold text-slate-900">₹{bItem.withPrintPrice || 0}</span>
+                                  </div>
+                                  <div className="flex justify-between">
+                                    <span>Without Print:</span>
+                                    <span className="font-bold text-slate-900">₹{bItem.withoutPrintPrice || 0}</span>
+                                  </div>
+                                </>
+                              )}
+                              {bItem.type === 'tiered' && (bItem.tiers || []).map((t, idx) => (
+                                <div key={idx} className="flex justify-between">
+                                  <span>{t.maxSheets ? `${t.minSheets}–${t.maxSheets} pgs:` : `${t.minSheets}+ pgs:`}</span>
+                                  <span className="font-bold text-slate-900">₹{t.price}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* Printers Section */}
