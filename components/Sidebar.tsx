@@ -7,7 +7,8 @@ import {
   MessageSquare,
   LogOut,
   Receipt,
-  LayoutGrid
+  LayoutGrid,
+  ShieldCheck
 } from 'lucide-react';
 
 interface SidebarItemProps {
@@ -31,8 +32,8 @@ const SidebarItem: React.FC<SidebarItemProps> = ({ icon, label, active, onClick 
 );
 
 interface SidebarProps {
-  activeView: 'dashboard' | 'customers' | 'reports' | 'transactions';
-  setActiveView: (view: 'dashboard' | 'customers' | 'reports' | 'transactions') => void;
+  activeView: 'dashboard' | 'customers' | 'reports' | 'transactions' | 'superuser';
+  setActiveView: (view: 'dashboard' | 'customers' | 'reports' | 'transactions' | 'superuser') => void;
   onSignOut?: () => void;
   userRole?: 'admin' | 'merchant';
   merchantName?: string;
@@ -115,6 +116,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   label="Reports & Help"
                   active={activeView === 'reports'}
                   onClick={() => setActiveView('reports')}
+                />
+                <SidebarItem
+                  icon={<ShieldCheck size={20} />}
+                  label="Superuser"
+                  active={activeView === 'superuser'}
+                  onClick={() => setActiveView('superuser')}
                 />
               </>
             )}

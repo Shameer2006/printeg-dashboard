@@ -39,13 +39,16 @@ import {
   Wallet,
   TrendingUp,
   BookOpen,
-  Sparkles
+  Sparkles,
+  ShieldCheck,
+  Key,
+  Shield
 } from 'lucide-react';
 import { QRCodeCanvas } from 'qrcode.react';
 import { Sidebar } from './components/Sidebar';
 import { StatCard } from './components/StatCard';
 import { ClientCard } from './components/ClientCard';
-import { Client, StatusType, PrintPrices, VendorPricing, PriceTier, PageRangeTier, BindingPricing, BindingItemConfig, SpiralRangeTier } from './types';
+import { Client, StatusType, PrintPrices, VendorPricing, PriceTier, PageRangeTier, BindingPricing, BindingItemConfig, SpiralRangeTier, Superuser } from './types';
 import { db } from './src/lib/firebase';
 import { collection, onSnapshot, query, addDoc, deleteDoc, updateDoc, doc, setDoc, getDocs, where } from 'firebase/firestore';
 
@@ -140,17 +143,50 @@ const LoginPage: React.FC<{
   const [recoveryPhone, setRecoveryPhone] = useState('');
   const [recoveryStatus, setRecoveryStatus] = useState<'idle' | 'success'>('idle');
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     setIsLoading(true);
 
-    setTimeout(() => {
-      const cleanUser = userId.trim().toLowerCase();
-      const cleanPass = password.trim();
+    const cleanUser = userId.trim().toLowerCase();
+    const cleanPass = password.trim();
 
-      // 1. Super Admin Authentication Check
-      if (cleanUser === 'printeg.online' && cleanPass === 'printeg') {
+    try {
+      // 1. Super Admin Authentication Check via Firestore `superuser` collection
+      let matchedSuperuser = false;
+      try {
+        const superuserSnap = await getDocs(collection(db, 'superuser'));
+        superuserSnap.forEach((sDoc) => {
+          const data = sDoc.data();
+          const docId = sDoc.id.trim().toLowerCase();
+          const docUsername = (data.username || '').trim().toLowerCase();
+          const docPassword = String(data.password || '').trim();
+          if ((docId === cleanUser || docUsername === cleanUser) && docPassword === cleanPass) {
+            matchedSuperuser = true;
+          }
+        });
+      } catch (dbErr) {
+        console.warn('Could not query superuser collection directly:', dbErr);
+      }
+
+      // Default fallback for super admin + auto-seeding to Firestore
+      if (!matchedSuperuser && cleanUser === 'printeg.online' && cleanPass === 'printeg') {
+        matchedSuperuser = true;
+        try {
+          await setDoc(doc(db, 'superuser', 'printeg.online'), {
+            username: 'printeg.online',
+            password: 'printeg',
+            name: 'Super Admin',
+            role: 'admin',
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+          }, { merge: true });
+        } catch (seedErr) {
+          console.warn('Auto-seed superuser warning:', seedErr);
+        }
+      }
+
+      if (matchedSuperuser) {
         setIsLoading(false);
         onLogin('admin');
         return;
@@ -178,9 +214,13 @@ const LoginPage: React.FC<{
         return;
       }
 
-      setError('Invalid User ID or Password. For Super Admin use printeg.online, or enter your shop\'s Merchant User ID & Password.');
+      setError('Invalid User ID or Password. For Super Admin enter your Superuser credentials, or enter your shop\'s Merchant User ID & Password.');
       setIsLoading(false);
-    }, 500);
+    } catch (err: any) {
+      console.error('Login authentication error:', err);
+      setError('Login failed. Please check your credentials and network connection.');
+      setIsLoading(false);
+    }
   };
 
   const handleRecovery = (e: React.FormEvent) => {
@@ -397,7 +437,7 @@ const App: React.FC = () => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [userRole, setUserRole] = useState<'admin' | 'merchant'>('admin');
   const [loggedInMerchant, setLoggedInMerchant] = useState<Client | null>(null);
-  const [activeView, setActiveView] = useState<'dashboard' | 'customers' | 'reports' | 'transactions'>('dashboard');
+  const [activeView, setActiveView] = useState<'dashboard' | 'customers' | 'reports' | 'transactions' | 'superuser'>('dashboard');
   const [clients, setClients] = useState<Client[]>([]);
   const [allOrders, setAllOrders] = useState<any[]>([]);
   const [allPrinterDocs, setAllPrinterDocs] = useState<any[]>([]);
@@ -413,6 +453,17 @@ const App: React.FC = () => {
   const [dbStatus, setDbStatus] = useState<'connecting' | 'connected' | 'error'>('connecting');
   const [dashboardSearchQuery, setDashboardSearchQuery] = useState('');
   const [transactionsSearchQuery, setTransactionsSearchQuery] = useState('');
+
+  // Superuser State & Master Auth Form
+  const [superusers, setSuperusers] = useState<Superuser[]>([]);
+  const [editSuperuserId, setEditSuperuserId] = useState('printeg.online');
+  const [editSuperuserUsername, setEditSuperuserUsername] = useState('printeg.online');
+  const [editSuperuserPassword, setEditSuperuserPassword] = useState('printeg');
+  const [editSuperuserName, setEditSuperuserName] = useState('Super Admin');
+  const [showSuperuserPass, setShowSuperuserPass] = useState(false);
+  const [isSavingSuperuser, setIsSavingSuperuser] = useState(false);
+  const [superuserSuccessMsg, setSuperuserSuccessMsg] = useState('');
+  const [copiedSuperuserKey, setCopiedSuperuserKey] = useState<'user' | 'pass' | null>(null);
 
   // New Client Form State
   const [newShopName, setNewShopName] = useState('');
@@ -872,6 +923,68 @@ const App: React.FC = () => {
     });
     return () => unsubscribe();
   }, []);
+
+  // Fetch Superusers from top-level `superuser` collection
+  useEffect(() => {
+    const q = query(collection(db, "superuser"));
+    const unsubscribe = onSnapshot(q, (querySnapshot) => {
+      const data: Superuser[] = [];
+      querySnapshot.forEach((docSnap) => {
+        data.push({ id: docSnap.id, ...docSnap.data() } as Superuser);
+      });
+      setSuperusers(data);
+      if (data.length > 0) {
+        const primary = data.find(s => s.username === 'printeg.online' || s.id === 'printeg.online') || data[0];
+        setEditSuperuserId(primary.id);
+        setEditSuperuserUsername(primary.username || primary.id);
+        setEditSuperuserPassword(primary.password || '');
+        setEditSuperuserName(primary.name || 'Super Admin');
+      }
+    }, (error) => {
+      console.warn("Error fetching superuser collection:", error);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  const handleSaveSuperuser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanUser = editSuperuserUsername.trim().toLowerCase();
+    const cleanPass = editSuperuserPassword.trim();
+    if (!cleanUser || !cleanPass) {
+      alert('Please provide both a User ID and Password');
+      return;
+    }
+    setIsSavingSuperuser(true);
+    try {
+      const targetDocId = editSuperuserId || cleanUser;
+      await setDoc(doc(db, 'superuser', targetDocId), {
+        username: cleanUser,
+        password: cleanPass,
+        name: editSuperuserName.trim() || 'Super Admin',
+        role: 'admin',
+        updatedAt: new Date().toISOString(),
+        createdAt: new Date().toISOString()
+      }, { merge: true });
+
+      // If document ID was renamed, remove the legacy document
+      if (editSuperuserId && editSuperuserId !== targetDocId) {
+        try {
+          await deleteDoc(doc(db, 'superuser', editSuperuserId));
+        } catch (delErr) {
+          console.warn('Could not remove previous superuser doc ID:', delErr);
+        }
+        setEditSuperuserId(targetDocId);
+      }
+
+      setSuperuserSuccessMsg('Superuser credentials saved to Firebase successfully!');
+      setTimeout(() => setSuperuserSuccessMsg(''), 4000);
+    } catch (err: any) {
+      console.error('Error saving superuser credentials:', err);
+      alert('Failed to save superuser credentials: ' + (err.message || err));
+    } finally {
+      setIsSavingSuperuser(false);
+    }
+  };
 
   // Keep selectedClient in sync with live Firestore data
   useEffect(() => {
@@ -3064,7 +3177,7 @@ const App: React.FC = () => {
               <div className="flex flex-col gap-1">
                 <div className="flex items-center gap-3">
                   <h2 className="text-4xl font-display font-bold text-slate-900 mb-1">
-                    {selectedClient ? selectedClient.shopName : (activeView === 'customers' ? 'Client Directory' : activeView === 'reports' ? 'Support Inbox' : activeView === 'transactions' ? 'Transaction Logs' : 'Network Overview')}
+                    {selectedClient ? selectedClient.shopName : (activeView === 'customers' ? 'Client Directory' : activeView === 'reports' ? 'Support Inbox' : activeView === 'transactions' ? 'Transaction Logs' : activeView === 'superuser' ? 'Superuser Credentials' : 'Network Overview')}
                   </h2>
                   {userRole === 'merchant' && (
                     <span className="bg-emerald-50 text-emerald-700 text-xs px-2.5 py-1 rounded-full font-bold border border-emerald-200 flex items-center gap-1.5">
@@ -3094,7 +3207,7 @@ const App: React.FC = () => {
                 <p className="text-slate-500 text-sm mt-2">
                   {selectedClient
                     ? (userRole === 'merchant' ? 'Live incoming orders queue, auto-refreshed with incoming sound chime.' : `Full audit log for Device ID: ${selectedClient.deviceId}`)
-                    : (activeView === 'transactions' ? 'Real-time monitoring of all print jobs, payments, and system errors.' : 'Manage and monitor all printer IoT deployments across your network.')}
+                    : (activeView === 'transactions' ? 'Real-time monitoring of all print jobs, payments, and system errors.' : activeView === 'superuser' ? 'Manage master Super Admin user ID and password stored in Firebase Firestore superuser collection.' : 'Manage and monitor all printer IoT deployments across your network.')}
                 </p>
                 <div className="flex items-center gap-2 mt-2">
                   <div className={`w-2 h-2 rounded-full ${dbStatus === 'connected' ? 'bg-emerald-500' : dbStatus === 'error' ? 'bg-rose-500' : 'bg-amber-400 animate-pulse'}`} />
@@ -4039,6 +4152,255 @@ const App: React.FC = () => {
               </div>
 
 
+            )
+          }
+
+          {/* Superuser Management View */}
+          {
+            activeView === 'superuser' && !selectedClient && userRole === 'admin' && (
+              <div className="space-y-8 animate-in zoom-in-95 duration-500">
+                {/* Info & Status Banner */}
+                <div className="bg-gradient-to-r from-slate-900 to-slate-800 rounded-3xl p-6 lg:p-8 text-white shadow-xl shadow-slate-900/10 flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
+                  <div className="flex items-start gap-4">
+                    <div className="w-12 h-12 rounded-2xl bg-white/10 flex items-center justify-center text-white shrink-0 border border-white/10">
+                      <ShieldCheck size={24} />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-xl font-display font-bold">Super Admin Master Credentials</h3>
+                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                          Live in Firestore
+                        </span>
+                      </div>
+                      <p className="text-slate-300 text-xs mt-1 max-w-xl">
+                        These credentials give master administrative access to the entire PrintEG platform, directory, transactions, and store rates. Stored in Firebase Firestore collection: <code className="bg-white/10 px-1.5 py-0.5 rounded font-mono text-white">superuser</code>.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 bg-white/10 px-4 py-2 rounded-2xl border border-white/10 text-xs font-medium">
+                    <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                    <span>Active Records: <strong className="text-white font-mono">{superusers.length || 1}</strong></span>
+                  </div>
+                </div>
+
+                {/* Main Content Grid */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                  {/* Left Column: Current Superuser Cards */}
+                  <div className="space-y-6">
+                    <div>
+                      <h4 className="text-base font-display font-bold text-slate-900 mb-1">Configured Superusers</h4>
+                      <p className="text-slate-500 text-xs">Accounts stored in the backend database that can sign into the Admin Console.</p>
+                    </div>
+
+                    {superusers.length === 0 ? (
+                      <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm">
+                        <div className="flex items-center justify-between pb-4 border-b border-slate-100">
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-xl bg-slate-900 text-white flex items-center justify-center font-bold">
+                              <Shield size={20} />
+                            </div>
+                            <div>
+                              <h5 className="font-bold text-slate-900 text-sm">Super Admin (Default)</h5>
+                              <span className="text-[11px] text-slate-400 font-mono">printeg.online</span>
+                            </div>
+                          </div>
+                          <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200">Default Key</span>
+                        </div>
+                        <div className="mt-4 space-y-2 text-xs">
+                          <div className="flex items-center justify-between bg-slate-50 p-3 rounded-xl border border-slate-100">
+                            <span className="text-slate-500 font-medium">User ID:</span>
+                            <span className="font-mono font-bold text-slate-900">printeg.online</span>
+                          </div>
+                          <div className="flex items-center justify-between bg-slate-50 p-3 rounded-xl border border-slate-100">
+                            <span className="text-slate-500 font-medium">Password:</span>
+                            <span className="font-mono font-bold text-slate-900">printeg</span>
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      superusers.map((su) => (
+                        <div key={su.id} className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm hover:shadow-md transition-shadow">
+                          <div className="flex items-center justify-between pb-4 border-b border-slate-100">
+                            <div className="flex items-center gap-3">
+                              <div className="w-10 h-10 rounded-xl bg-slate-900 text-white flex items-center justify-center font-bold">
+                                <Shield size={20} />
+                              </div>
+                              <div>
+                                <h5 className="font-bold text-slate-900 text-sm">{su.name || 'Super Admin'}</h5>
+                                <span className="text-[11px] text-slate-400 font-mono">Doc ID: {su.id}</span>
+                              </div>
+                            </div>
+                            <span className="text-[10px] font-bold uppercase px-2.5 py-1 rounded-full bg-slate-900 text-white">
+                              {su.role || 'Admin'}
+                            </span>
+                          </div>
+
+                          <div className="mt-4 space-y-2.5 text-xs">
+                            <div className="flex items-center justify-between bg-slate-50 p-3 rounded-xl border border-slate-100">
+                              <span className="text-slate-500 font-medium">User ID:</span>
+                              <div className="flex items-center gap-2">
+                                <span className="font-mono font-bold text-slate-900">{su.username || su.id}</span>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    navigator.clipboard.writeText(su.username || su.id);
+                                    setCopiedSuperuserKey('user');
+                                    setTimeout(() => setCopiedSuperuserKey(null), 2000);
+                                  }}
+                                  className="p-1 hover:bg-slate-200 rounded text-slate-400 hover:text-black transition-colors"
+                                  title="Copy User ID"
+                                >
+                                  {copiedSuperuserKey === 'user' ? <Check size={12} className="text-emerald-600" /> : <Copy size={12} />}
+                                </button>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center justify-between bg-slate-50 p-3 rounded-xl border border-slate-100">
+                              <span className="text-slate-500 font-medium">Password:</span>
+                              <div className="flex items-center gap-2">
+                                <span className="font-mono font-bold text-slate-900">
+                                  {showSuperuserPass ? su.password : '••••••••••••'}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => setShowSuperuserPass(!showSuperuserPass)}
+                                  className="p-1 hover:bg-slate-200 rounded text-slate-400 hover:text-black transition-colors"
+                                  title={showSuperuserPass ? "Hide password" : "Show password"}
+                                >
+                                  {showSuperuserPass ? <EyeOff size={12} /> : <Eye size={12} />}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    navigator.clipboard.writeText(su.password);
+                                    setCopiedSuperuserKey('pass');
+                                    setTimeout(() => setCopiedSuperuserKey(null), 2000);
+                                  }}
+                                  className="p-1 hover:bg-slate-200 rounded text-slate-400 hover:text-black transition-colors"
+                                  title="Copy Password"
+                                >
+                                  {copiedSuperuserKey === 'pass' ? <Check size={12} className="text-emerald-600" /> : <Copy size={12} />}
+                                </button>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center justify-between pt-2 text-[11px] text-slate-400">
+                              <span>Last Updated:</span>
+                              <span>{su.updatedAt ? new Date(su.updatedAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : 'Initialized'}</span>
+                            </div>
+                          </div>
+
+                          <div className="mt-4 pt-4 border-t border-slate-100 flex justify-end">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditSuperuserId(su.id);
+                                setEditSuperuserUsername(su.username || su.id);
+                                setEditSuperuserPassword(su.password || '');
+                                setEditSuperuserName(su.name || 'Super Admin');
+                              }}
+                              className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold rounded-xl flex items-center gap-1.5 transition-colors"
+                            >
+                              <Pencil size={12} /> Edit in Form
+                            </button>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+
+                  {/* Right Column: Edit / Save Form */}
+                  <div className="bg-white border border-slate-200 rounded-3xl p-6 lg:p-8 shadow-sm h-fit">
+                    <div className="flex items-center gap-3 mb-6">
+                      <div className="w-10 h-10 rounded-xl bg-slate-900 text-white flex items-center justify-center font-bold">
+                        <Key size={18} />
+                      </div>
+                      <div>
+                        <h4 className="text-lg font-display font-bold text-slate-900">Update Superuser in Firebase</h4>
+                        <p className="text-slate-500 text-xs">Save new Master User ID & Password directly into Firestore.</p>
+                      </div>
+                    </div>
+
+                    {superuserSuccessMsg && (
+                      <div className="mb-6 p-4 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-800 flex items-center gap-2.5 text-xs font-bold animate-in fade-in duration-300">
+                        <CheckCircle2 size={16} className="text-emerald-600 shrink-0" />
+                        <span>{superuserSuccessMsg}</span>
+                      </div>
+                    )}
+
+                    <form onSubmit={handleSaveSuperuser} className="space-y-4">
+                      <div>
+                        <label className="block text-xs font-bold text-slate-400 uppercase mb-1.5">
+                          Display Name / Label
+                        </label>
+                        <input
+                          type="text"
+                          required
+                          className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium outline-none focus:ring-2 focus:ring-black transition-all"
+                          placeholder="Super Admin"
+                          value={editSuperuserName}
+                          onChange={(e) => setEditSuperuserName(e.target.value)}
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-bold text-slate-400 uppercase mb-1.5">
+                          Superuser User ID (Login Username)
+                        </label>
+                        <input
+                          type="text"
+                          required
+                          className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold font-mono outline-none focus:ring-2 focus:ring-black transition-all"
+                          placeholder="printeg.online"
+                          value={editSuperuserUsername}
+                          onChange={(e) => setEditSuperuserUsername(e.target.value)}
+                        />
+                        <span className="text-[11px] text-slate-400 mt-1 block">
+                          This User ID will be used to log into the Admin Console.
+                        </span>
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-bold text-slate-400 uppercase mb-1.5">
+                          Superuser Password
+                        </label>
+                        <div className="relative">
+                          <input
+                            type={showSuperuserPass ? "text" : "password"}
+                            required
+                            className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold font-mono outline-none focus:ring-2 focus:ring-black transition-all pr-10"
+                            placeholder="Enter secure password"
+                            value={editSuperuserPassword}
+                            onChange={(e) => setEditSuperuserPassword(e.target.value)}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowSuperuserPass(!showSuperuserPass)}
+                            className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-black"
+                          >
+                            {showSuperuserPass ? <EyeOff size={16} /> : <Eye size={16} />}
+                          </button>
+                        </div>
+                        <span className="text-[11px] text-slate-400 mt-1 block">
+                          Stored securely in Firebase and checked on next login.
+                        </span>
+                      </div>
+
+                      <div className="pt-3">
+                        <button
+                          type="submit"
+                          disabled={isSavingSuperuser}
+                          className="w-full bg-black hover:bg-slate-800 text-white py-3.5 rounded-xl font-bold transition-all shadow-lg shadow-black/20 flex items-center justify-center gap-2 active:scale-95 disabled:opacity-50"
+                        >
+                          <ShieldCheck size={16} />
+                          {isSavingSuperuser ? 'Saving to Firebase...' : 'Save Superuser Credentials'}
+                        </button>
+                      </div>
+                    </form>
+                  </div>
+                </div>
+              </div>
             )
           }
         </main >

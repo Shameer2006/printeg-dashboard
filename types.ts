@@ -91,6 +91,16 @@ export interface VendorPricing {
   binding?: BindingPricing; // Fully customizable binding configuration
 }
 
+export interface Superuser {
+  id: string;
+  username: string;
+  password: string;
+  name?: string;
+  role?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
 export interface MerchantCredentials {
   username: string;
   password: string;
