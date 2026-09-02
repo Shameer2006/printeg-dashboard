@@ -1107,13 +1107,26 @@ const App: React.FC = () => {
   const confirmDeleteClient = async () => {
     if (clientToDelete) {
       try {
+        const clientObj = clients.find(c => c.id === clientToDelete);
+        const slug = clientObj?.slug || clientObj?.id || clientToDelete;
+
+        // 1. Delete from clients collection
         await deleteDoc(doc(db, 'clients', clientToDelete));
+
+        // 2. Delete from vendors collection as well
+        if (slug) {
+          await deleteDoc(doc(db, 'vendors', slug));
+        }
+        if (clientToDelete !== slug) {
+          await deleteDoc(doc(db, 'vendors', clientToDelete));
+        }
+
         if (selectedClient?.id === clientToDelete) {
           setSelectedClient(null);
           setShowDetailsPanel(false);
         }
       } catch (err) {
-        console.error('Error deleting client:', err);
+        console.error('Error deleting client and vendor:', err);
       }
       setClientToDelete(null);
     }
