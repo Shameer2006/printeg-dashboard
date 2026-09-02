@@ -45,9 +45,27 @@ import { QRCodeCanvas } from 'qrcode.react';
 import { Sidebar } from './components/Sidebar';
 import { StatCard } from './components/StatCard';
 import { ClientCard } from './components/ClientCard';
-import { Client, StatusType, PrintPrices, VendorPricing, PriceTier, BindingPricing, BindingItemConfig, SpiralRangeTier } from './types';
+import { Client, StatusType, PrintPrices, VendorPricing, PriceTier, PageRangeTier, BindingPricing, BindingItemConfig, SpiralRangeTier } from './types';
 import { db } from './src/lib/firebase';
 import { collection, onSnapshot, query, addDoc, deleteDoc, updateDoc, doc, setDoc } from 'firebase/firestore';
+
+const DEFAULT_SINGLE_SIDE_TIERS: PageRangeTier[] = [
+  { id: '1', minPages: 1, maxPages: 10, rate: 1.5 },
+  { id: '2', minPages: 11, maxPages: 40, rate: 1.2 },
+  { id: '3', minPages: 41, maxPages: null, rate: 1.0 },
+];
+
+const DEFAULT_DOUBLE_SIDE_TIERS: PageRangeTier[] = [
+  { id: '1', minPages: 1, maxPages: 10, rate: 2.0 },
+  { id: '2', minPages: 11, maxPages: 40, rate: 1.8 },
+  { id: '3', minPages: 41, maxPages: null, rate: 1.5 },
+];
+
+const DEFAULT_COLOR_TIERS: PageRangeTier[] = [
+  { id: '1', minPages: 1, maxPages: 10, rate: 10.0 },
+  { id: '2', minPages: 11, maxPages: 40, rate: 8.0 },
+  { id: '3', minPages: 41, maxPages: null, rate: 6.0 },
+];
 
 const DEFAULT_PRICE_TIERS: PriceTier[] = [
   { id: '1', minPages: 1, maxPages: 10, bwRate: 1.5, doubleSidedRate: 2.0, colorRate: 10.0 },
@@ -458,8 +476,12 @@ const App: React.FC = () => {
     color: 10.0,
     a4Sheet: 1.0,
     enableTiers: true,
+    singleSideTiers: DEFAULT_SINGLE_SIDE_TIERS,
+    doubleSideTiers: DEFAULT_DOUBLE_SIDE_TIERS,
+    colorTiers: DEFAULT_COLOR_TIERS,
     tiers: DEFAULT_PRICE_TIERS,
   });
+  const [pricingTierCategory, setPricingTierCategory] = useState<'single' | 'double' | 'color'>('single');
   const [showPricingDetails, setShowPricingDetails] = useState(true);
   const [shopInfo, setShopInfo] = useState('');
   const [customWebsiteName, setCustomWebsiteName] = useState('');
@@ -889,16 +911,36 @@ const App: React.FC = () => {
       .replace(/[^a-z0-9]+/g, '-')
       .replace(/(^-|-$)/g, '') || `shop-${Date.now().toString(36)}`;
 
+    const singleBw = parseFloat(String(onboardBw)) || 1.5;
+    const doubleBw = parseFloat(String(onboardDouble)) || 2.0;
+    const colorRate = parseFloat(String(onboardColor)) || 10.0;
+    const a4Rate = parseFloat(String(onboardA4)) || 1.0;
+
     const pricingObj: VendorPricing = {
-      bw: parseFloat(String(onboardBw)) || 1.5,
-      doubleSided: parseFloat(String(onboardDouble)) || 2.0,
-      color: parseFloat(String(onboardColor)) || 10.0,
-      a4Sheet: parseFloat(String(onboardA4)) || 1.0,
+      bw: singleBw,
+      doubleSided: doubleBw,
+      color: colorRate,
+      a4Sheet: a4Rate,
       enableTiers: true,
+      singleSideTiers: [
+        { id: '1', minPages: 1, maxPages: 10, rate: singleBw },
+        { id: '2', minPages: 11, maxPages: 40, rate: Math.max(0.5, singleBw - 0.3) },
+        { id: '3', minPages: 41, maxPages: null, rate: Math.max(0.5, singleBw - 0.5) },
+      ],
+      doubleSideTiers: [
+        { id: '1', minPages: 1, maxPages: 10, rate: doubleBw },
+        { id: '2', minPages: 11, maxPages: 40, rate: Math.max(1.0, doubleBw - 0.2) },
+        { id: '3', minPages: 41, maxPages: null, rate: Math.max(1.0, doubleBw - 0.5) },
+      ],
+      colorTiers: [
+        { id: '1', minPages: 1, maxPages: 10, rate: colorRate },
+        { id: '2', minPages: 11, maxPages: 40, rate: Math.max(2.0, colorRate - 2.0) },
+        { id: '3', minPages: 41, maxPages: null, rate: Math.max(2.0, colorRate - 4.0) },
+      ],
       tiers: [
-        { id: '1', minPages: 1, maxPages: 10, bwRate: parseFloat(String(onboardBw)) || 1.5, doubleSidedRate: parseFloat(String(onboardDouble)) || 2.0, colorRate: parseFloat(String(onboardColor)) || 10.0 },
-        { id: '2', minPages: 11, maxPages: 40, bwRate: Math.max(0.5, (parseFloat(String(onboardBw)) || 1.5) - 0.3), doubleSidedRate: Math.max(1, (parseFloat(String(onboardDouble)) || 2.0) - 0.2), colorRate: Math.max(2, (parseFloat(String(onboardColor)) || 10.0) - 2) },
-        { id: '3', minPages: 41, maxPages: null, bwRate: Math.max(0.5, (parseFloat(String(onboardBw)) || 1.5) - 0.5), doubleSidedRate: Math.max(1, (parseFloat(String(onboardDouble)) || 2.0) - 0.5), colorRate: Math.max(2, (parseFloat(String(onboardColor)) || 10.0) - 4) },
+        { id: '1', minPages: 1, maxPages: 10, bwRate: singleBw, doubleSidedRate: doubleBw, colorRate: colorRate },
+        { id: '2', minPages: 11, maxPages: 40, bwRate: Math.max(0.5, singleBw - 0.3), doubleSidedRate: Math.max(1, doubleBw - 0.2), colorRate: Math.max(2, colorRate - 2) },
+        { id: '3', minPages: 41, maxPages: null, bwRate: Math.max(0.5, singleBw - 0.5), doubleSidedRate: Math.max(1, doubleBw - 0.5), colorRate: Math.max(2, colorRate - 4) },
       ],
       binding: DEFAULT_BINDING_CONFIG,
     };
@@ -1128,21 +1170,78 @@ const App: React.FC = () => {
 
   const handleOpenShopSettings = () => {
     const rawPricing = selectedClient?.pricing;
-    const initialTiers: PriceTier[] = rawPricing?.tiers && rawPricing.tiers.length > 0
-      ? rawPricing.tiers
-      : [
-          { id: '1', minPages: 1, maxPages: 10, bwRate: rawPricing?.bw || 1.5, doubleSidedRate: rawPricing?.doubleSided || 2.0, colorRate: rawPricing?.color || 10.0 },
-          { id: '2', minPages: 11, maxPages: 40, bwRate: Math.max(0.5, (rawPricing?.bw || 1.5) - 0.3), doubleSidedRate: Math.max(1, (rawPricing?.doubleSided || 2.0) - 0.2), colorRate: Math.max(2, (rawPricing?.color || 10.0) - 2) },
-          { id: '3', minPages: 41, maxPages: null, bwRate: Math.max(0.5, (rawPricing?.bw || 1.5) - 0.5), doubleSidedRate: Math.max(1, (rawPricing?.doubleSided || 2.0) - 0.5), colorRate: Math.max(2, (rawPricing?.color || 10.0) - 4) },
-        ];
+    const baseBw = rawPricing?.bw || selectedClient?.printingPrices?.singleSide?.bw || 1.5;
+    const baseDouble = rawPricing?.doubleSided || selectedClient?.printingPrices?.doubleSide?.bw || 2.0;
+    const baseColor = rawPricing?.color || selectedClient?.printingPrices?.singleSide?.color || 10.0;
+    const baseA4 = rawPricing?.a4Sheet || 1.0;
+
+    // Load or migrate singleSideTiers
+    let singleTiers: PageRangeTier[] = [];
+    if (rawPricing?.singleSideTiers && rawPricing.singleSideTiers.length > 0) {
+      singleTiers = rawPricing.singleSideTiers;
+    } else if (rawPricing?.tiers && rawPricing.tiers.length > 0) {
+      singleTiers = rawPricing.tiers.map((t, idx) => ({
+        id: t.id || String(idx + 1),
+        minPages: t.minPages,
+        maxPages: t.maxPages,
+        rate: t.bwRate ?? baseBw,
+      }));
+    } else {
+      singleTiers = [
+        { id: '1', minPages: 1, maxPages: 10, rate: baseBw },
+        { id: '2', minPages: 11, maxPages: 40, rate: Math.max(0.5, Math.round((baseBw - 0.3) * 10) / 10) },
+        { id: '3', minPages: 41, maxPages: null, rate: Math.max(0.5, Math.round((baseBw - 0.5) * 10) / 10) },
+      ];
+    }
+
+    // Load or migrate doubleSideTiers
+    let doubleTiers: PageRangeTier[] = [];
+    if (rawPricing?.doubleSideTiers && rawPricing.doubleSideTiers.length > 0) {
+      doubleTiers = rawPricing.doubleSideTiers;
+    } else if (rawPricing?.tiers && rawPricing.tiers.length > 0) {
+      doubleTiers = rawPricing.tiers.map((t, idx) => ({
+        id: t.id || String(idx + 1),
+        minPages: t.minPages,
+        maxPages: t.maxPages,
+        rate: t.doubleSidedRate ?? baseDouble,
+      }));
+    } else {
+      doubleTiers = [
+        { id: '1', minPages: 1, maxPages: 10, rate: baseDouble },
+        { id: '2', minPages: 11, maxPages: 40, rate: Math.max(1.0, Math.round((baseDouble - 0.2) * 10) / 10) },
+        { id: '3', minPages: 41, maxPages: null, rate: Math.max(1.0, Math.round((baseDouble - 0.5) * 10) / 10) },
+      ];
+    }
+
+    // Load or migrate colorTiers
+    let colorTiersList: PageRangeTier[] = [];
+    if (rawPricing?.colorTiers && rawPricing.colorTiers.length > 0) {
+      colorTiersList = rawPricing.colorTiers;
+    } else if (rawPricing?.tiers && rawPricing.tiers.length > 0) {
+      colorTiersList = rawPricing.tiers.map((t, idx) => ({
+        id: t.id || String(idx + 1),
+        minPages: t.minPages,
+        maxPages: t.maxPages,
+        rate: t.colorRate ?? baseColor,
+      }));
+    } else {
+      colorTiersList = [
+        { id: '1', minPages: 1, maxPages: 10, rate: baseColor },
+        { id: '2', minPages: 11, maxPages: 40, rate: Math.max(2.0, Math.round((baseColor - 2.0) * 10) / 10) },
+        { id: '3', minPages: 41, maxPages: null, rate: Math.max(2.0, Math.round((baseColor - 4.0) * 10) / 10) },
+      ];
+    }
 
     const currentPricing: VendorPricing = {
-      bw: rawPricing?.bw || selectedClient?.printingPrices?.singleSide?.bw || 1.5,
-      doubleSided: rawPricing?.doubleSided || selectedClient?.printingPrices?.doubleSide?.bw || 2.0,
-      color: rawPricing?.color || selectedClient?.printingPrices?.singleSide?.color || 10.0,
-      a4Sheet: rawPricing?.a4Sheet || 1.0,
+      bw: baseBw,
+      doubleSided: baseDouble,
+      color: baseColor,
+      a4Sheet: baseA4,
       enableTiers: rawPricing?.enableTiers !== undefined ? rawPricing.enableTiers : true,
-      tiers: initialTiers,
+      singleSideTiers: singleTiers,
+      doubleSideTiers: doubleTiers,
+      colorTiers: colorTiersList,
+      tiers: rawPricing?.tiers,
       binding: rawPricing?.binding || DEFAULT_BINDING_CONFIG,
     };
     setVendorPricing(currentPricing);
@@ -1247,57 +1346,86 @@ const App: React.FC = () => {
     });
   };
 
-  const handleAddTier = () => {
-    const currentTiers = vendorPricing.tiers || [];
+  const getCategoryTiers = (category: 'single' | 'double' | 'color'): PageRangeTier[] => {
+    if (category === 'single') return vendorPricing.singleSideTiers || [];
+    if (category === 'double') return vendorPricing.doubleSideTiers || [];
+    return vendorPricing.colorTiers || [];
+  };
+
+  const setCategoryTiers = (category: 'single' | 'double' | 'color', tiers: PageRangeTier[]) => {
+    if (category === 'single') {
+      setVendorPricing({ ...vendorPricing, singleSideTiers: tiers });
+    } else if (category === 'double') {
+      setVendorPricing({ ...vendorPricing, doubleSideTiers: tiers });
+    } else {
+      setVendorPricing({ ...vendorPricing, colorTiers: tiers });
+    }
+  };
+
+  const handleAddTier = (category: 'single' | 'double' | 'color') => {
+    const currentTiers = getCategoryTiers(category);
     const lastTier = currentTiers[currentTiers.length - 1];
     const newMin = lastTier && lastTier.maxPages ? lastTier.maxPages + 1 : (lastTier ? lastTier.minPages + 10 : 1);
-    const newTier: PriceTier = {
+    const baseRate = category === 'single' ? vendorPricing.bw : (category === 'double' ? vendorPricing.doubleSided : vendorPricing.color);
+    const stepDiff = category === 'color' ? 1.0 : 0.2;
+    const newRate = lastTier ? Math.max(0.5, Math.round((lastTier.rate - stepDiff) * 10) / 10) : baseRate;
+
+    const newTier: PageRangeTier = {
       id: String(Date.now()),
       minPages: newMin,
       maxPages: null,
-      bwRate: Math.max(0.5, (lastTier?.bwRate || vendorPricing.bw) - 0.2),
-      doubleSidedRate: Math.max(1, (lastTier?.doubleSidedRate || vendorPricing.doubleSided) - 0.2),
-      colorRate: Math.max(2, (lastTier?.colorRate || vendorPricing.color) - 1),
+      rate: newRate,
     };
+
     let updatedTiers = [...currentTiers];
     if (lastTier && lastTier.maxPages === null) {
       updatedTiers[updatedTiers.length - 1] = {
         ...lastTier,
-        maxPages: newMin - 1
+        maxPages: newMin - 1,
       };
     }
     updatedTiers.push(newTier);
-    setVendorPricing({ ...vendorPricing, tiers: updatedTiers });
+    setCategoryTiers(category, updatedTiers);
   };
 
-  const handleUpdateTier = (index: number, field: keyof PriceTier, value: any) => {
-    const currentTiers = [...(vendorPricing.tiers || [])];
+  const handleUpdateTier = (category: 'single' | 'double' | 'color', index: number, field: keyof PageRangeTier, value: any) => {
+    const currentTiers = [...getCategoryTiers(category)];
     if (!currentTiers[index]) return;
     currentTiers[index] = {
       ...currentTiers[index],
-      [field]: value
+      [field]: value,
     };
-    setVendorPricing({ ...vendorPricing, tiers: currentTiers });
+    setCategoryTiers(category, currentTiers);
   };
 
-  const handleDeleteTier = (index: number) => {
-    const currentTiers = (vendorPricing.tiers || []).filter((_, i) => i !== index);
-    setVendorPricing({ ...vendorPricing, tiers: currentTiers });
+  const handleDeleteTier = (category: 'single' | 'double' | 'color', index: number) => {
+    const currentTiers = getCategoryTiers(category).filter((_, i) => i !== index);
+    setCategoryTiers(category, currentTiers);
   };
 
-  const handleResetStandardTiers = () => {
-    const baseBw = vendorPricing.bw || 1.5;
-    const baseDouble = vendorPricing.doubleSided || 2.0;
-    const baseColor = vendorPricing.color || 10.0;
-    setVendorPricing({
-      ...vendorPricing,
-      enableTiers: true,
-      tiers: [
-        { id: '1', minPages: 1, maxPages: 10, bwRate: baseBw, doubleSidedRate: baseDouble, colorRate: baseColor },
-        { id: '2', minPages: 11, maxPages: 40, bwRate: Math.max(0.5, baseBw - 0.3), doubleSidedRate: Math.max(1, baseDouble - 0.2), colorRate: Math.max(2, baseColor - 2) },
-        { id: '3', minPages: 41, maxPages: null, bwRate: Math.max(0.5, baseBw - 0.5), doubleSidedRate: Math.max(1, baseDouble - 0.5), colorRate: Math.max(2, baseColor - 4) },
-      ]
-    });
+  const handleResetStandardTiers = (category: 'single' | 'double' | 'color') => {
+    if (category === 'single') {
+      const base = vendorPricing.bw || 1.5;
+      setCategoryTiers('single', [
+        { id: '1', minPages: 1, maxPages: 10, rate: base },
+        { id: '2', minPages: 11, maxPages: 40, rate: Math.max(0.5, Math.round((base - 0.3) * 10) / 10) },
+        { id: '3', minPages: 41, maxPages: null, rate: Math.max(0.5, Math.round((base - 0.5) * 10) / 10) },
+      ]);
+    } else if (category === 'double') {
+      const base = vendorPricing.doubleSided || 2.0;
+      setCategoryTiers('double', [
+        { id: '1', minPages: 1, maxPages: 10, rate: base },
+        { id: '2', minPages: 11, maxPages: 40, rate: Math.max(1.0, Math.round((base - 0.2) * 10) / 10) },
+        { id: '3', minPages: 41, maxPages: null, rate: Math.max(1.0, Math.round((base - 0.5) * 10) / 10) },
+      ]);
+    } else {
+      const base = vendorPricing.color || 10.0;
+      setCategoryTiers('color', [
+        { id: '1', minPages: 1, maxPages: 10, rate: base },
+        { id: '2', minPages: 11, maxPages: 40, rate: Math.max(2.0, Math.round((base - 2.0) * 10) / 10) },
+        { id: '3', minPages: 41, maxPages: null, rate: Math.max(2.0, Math.round((base - 4.0) * 10) / 10) },
+      ]);
+    }
   };
 
   const handleSaveShopSettings = async (e: React.FormEvent) => {
@@ -1506,17 +1634,17 @@ const App: React.FC = () => {
 
       {/* Shop Settings Modal */}
       {showShopSettingsModal && selectedClient && (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 md:p-6">
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowShopSettingsModal(false)} />
-          <div className="relative bg-white w-full max-w-3xl rounded-3xl p-8 shadow-2xl animate-in zoom-in-95 duration-200 overflow-y-auto max-h-[90vh]">
+          <div className="relative bg-white w-full max-w-5xl lg:max-w-6xl rounded-3xl p-6 lg:p-8 shadow-2xl animate-in zoom-in-95 duration-200 overflow-y-auto max-h-[92vh]">
             <button onClick={() => setShowShopSettingsModal(false)} className="absolute top-6 right-6 text-slate-400 hover:text-black">
               <X size={24} />
             </button>
             <h3 className="text-2xl font-display font-bold mb-2">Shop Settings</h3>
             <p className="text-slate-500 mb-6">Configure details and unique QR for <span className="font-bold text-slate-900">{selectedClient.shopName}</span></p>
 
-            <div className="flex flex-col md:flex-row gap-8">
-              <form onSubmit={handleSaveShopSettings} className="space-y-4 flex-1">
+            <div className="flex flex-col lg:flex-row gap-8">
+              <form onSubmit={handleSaveShopSettings} className="space-y-4 flex-1 min-w-0">
                 <div>
                   <button
                     type="button"
@@ -1529,182 +1657,388 @@ const App: React.FC = () => {
 
                   {showPricingDetails && (
                     <div className="mt-3 p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-5 animate-in fade-in zoom-in-95 duration-200">
-                      {/* Base Rates */}
-                      <div>
-                        <div className="flex items-center justify-between mb-2">
-                          <label className="block text-[11px] font-bold text-slate-400 uppercase">Standard / Base Rates</label>
+                      {/* Global Volume Tiers Toggle */}
+                      <div className="flex items-center justify-between pb-3 border-b border-slate-200">
+                        <div>
+                          <span className="text-xs font-bold text-slate-900 block">Range-Based Volume Pricing</span>
+                          <span className="text-[10px] text-slate-500">Each print type has its own independent page ranges and bulk discount rates</span>
                         </div>
-                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-                          <div>
-                            <span className="text-[10px] text-slate-500 mb-1 block font-medium">B&W Single (₹)</span>
-                            <input
-                              type="number"
-                              min="0"
-                              step="0.5"
-                              className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg outline-none text-xs focus:ring-2 focus:ring-black font-semibold text-center"
-                              value={vendorPricing.bw}
-                              onChange={(e) => setVendorPricing({ ...vendorPricing, bw: parseFloat(e.target.value) || 0 })}
-                            />
-                          </div>
-                          <div>
-                            <span className="text-[10px] text-slate-500 mb-1 block font-medium">B&W Double (₹)</span>
-                            <input
-                              type="number"
-                              min="0"
-                              step="0.5"
-                              className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg outline-none text-xs focus:ring-2 focus:ring-black font-semibold text-center"
-                              value={vendorPricing.doubleSided}
-                              onChange={(e) => setVendorPricing({ ...vendorPricing, doubleSided: parseFloat(e.target.value) || 0 })}
-                            />
-                          </div>
-                          <div>
-                            <span className="text-[10px] text-slate-500 mb-1 block font-medium">Color Print (₹)</span>
-                            <input
-                              type="number"
-                              min="0"
-                              step="0.5"
-                              className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg outline-none text-xs focus:ring-2 focus:ring-black font-semibold text-center"
-                              value={vendorPricing.color}
-                              onChange={(e) => setVendorPricing({ ...vendorPricing, color: parseFloat(e.target.value) || 0 })}
-                            />
-                          </div>
-                          <div>
-                            <span className="text-[10px] text-slate-500 mb-1 block font-medium">Blank A4 (₹)</span>
-                            <input
-                              type="number"
-                              min="0"
-                              step="0.5"
-                              className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg outline-none text-xs focus:ring-2 focus:ring-black font-semibold text-center"
-                              value={vendorPricing.a4Sheet}
-                              onChange={(e) => setVendorPricing({ ...vendorPricing, a4Sheet: parseFloat(e.target.value) || 0 })}
-                            />
-                          </div>
-                        </div>
+                        <label className="relative inline-flex items-center cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={vendorPricing.enableTiers !== false}
+                            onChange={(e) => setVendorPricing({ ...vendorPricing, enableTiers: e.target.checked })}
+                            className="sr-only peer"
+                          />
+                          <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-600"></div>
+                        </label>
                       </div>
 
-                      {/* Tiered / Range-based Volume Pricing */}
-                      <div className="pt-3 border-t border-slate-200">
-                        <div className="flex items-center justify-between mb-2">
-                          <div>
-                            <span className="text-xs font-bold text-slate-800 block">Page Range / Volume Pricing</span>
-                            <span className="text-[10px] text-slate-500">Auto-discounts rate per page based on total order pages</span>
+                      {/* 1. SINGLE SIDE (B&W) SECTION */}
+                      <div className="p-4 bg-white rounded-2xl border border-slate-200 shadow-sm space-y-4">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+                          <div className="flex items-center gap-2">
+                            <span className="w-2.5 h-2.5 rounded-full bg-slate-800" />
+                            <div>
+                              <span className="text-sm font-bold text-slate-900 block">Single Side (B&W / Xerox)</span>
+                              <span className="text-[10px] text-slate-500">Standard single side black &amp; white printing</span>
+                            </div>
                           </div>
-                          <label className="relative inline-flex items-center cursor-pointer">
-                            <input
-                              type="checkbox"
-                              checked={vendorPricing.enableTiers !== false}
-                              onChange={(e) => setVendorPricing({ ...vendorPricing, enableTiers: e.target.checked })}
-                              className="sr-only peer"
-                            />
-                            <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-600"></div>
-                          </label>
+                          <div className="flex items-center gap-2 bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-200">
+                            <span className="text-[11px] font-bold text-slate-500 uppercase">Standard Rate:</span>
+                            <div className="flex items-center gap-1 font-bold text-xs text-slate-900">
+                              <span>₹</span>
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.1"
+                                className="w-16 px-1.5 py-0.5 bg-white border border-slate-200 rounded-lg text-center font-bold text-xs outline-none focus:ring-1 focus:ring-black"
+                                value={vendorPricing.bw}
+                                onChange={(e) => setVendorPricing({ ...vendorPricing, bw: parseFloat(e.target.value) || 0 })}
+                              />
+                              <span className="text-slate-400 font-normal">/page</span>
+                            </div>
+                          </div>
                         </div>
 
+                        {/* Single Side Range Tiers */}
                         {vendorPricing.enableTiers !== false && (
-                          <div className="space-y-3 mt-3">
-                            {(vendorPricing.tiers || []).map((tier, idx) => (
-                              <div key={tier.id || idx} className="p-3.5 bg-white rounded-xl border border-slate-200 shadow-sm space-y-2.5">
-                                <div className="flex items-center justify-between pb-1.5 border-b border-slate-100">
-                                  <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-                                    <span className="w-2 h-2 rounded-full bg-emerald-500" />
-                                    Tier {idx + 1}: {tier.maxPages ? `${tier.minPages} to ${tier.maxPages} pages` : `${tier.minPages}+ pages (Bulk)`}
-                                  </span>
-                                  {(vendorPricing.tiers || []).length > 1 && (
-                                    <button
-                                      type="button"
-                                      onClick={() => handleDeleteTier(idx)}
-                                      className="text-rose-500 hover:text-rose-700 p-1 rounded-lg hover:bg-rose-50 transition-colors"
-                                      title="Delete Tier"
-                                    >
-                                      <Trash2 size={13} />
-                                    </button>
-                                  )}
-                                </div>
+                          <div className="space-y-3">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Page Ranges &amp; Bulk Rates</span>
+                              <span className="text-[10px] text-slate-500 font-medium">{(vendorPricing.singleSideTiers || []).length} range tier{(vendorPricing.singleSideTiers || []).length !== 1 ? 's' : ''}</span>
+                            </div>
 
-                                {/* Row 1: Page Range */}
-                                <div className="grid grid-cols-2 gap-3">
-                                  <div>
-                                    <span className="text-[10px] text-slate-500 font-bold uppercase block mb-1">From (Min Pages)</span>
-                                    <input
-                                      type="number"
-                                      min="1"
-                                      className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg font-bold text-xs outline-none focus:ring-1 focus:ring-black text-center"
-                                      value={tier.minPages}
-                                      onChange={(e) => handleUpdateTier(idx, 'minPages', parseInt(e.target.value) || 1)}
-                                    />
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                              {(vendorPricing.singleSideTiers || []).map((tier, idx) => (
+                                <div key={tier.id || idx} className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-2.5">
+                                  <div className="flex items-center justify-between pb-1 border-b border-slate-200">
+                                    <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                                      <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                                      Tier {idx + 1}: {tier.maxPages ? `${tier.minPages} to ${tier.maxPages} pages` : `${tier.minPages}+ pages (Bulk)`}
+                                    </span>
+                                    {(vendorPricing.singleSideTiers || []).length > 1 && (
+                                      <button
+                                        type="button"
+                                        onClick={() => handleDeleteTier('single', idx)}
+                                        className="text-rose-500 hover:text-rose-700 p-1 rounded-lg hover:bg-rose-50 transition-colors"
+                                        title="Delete Tier"
+                                      >
+                                        <Trash2 size={13} />
+                                      </button>
+                                    )}
                                   </div>
-                                  <div>
-                                    <span className="text-[10px] text-slate-500 font-bold uppercase block mb-1">To (Max Pages)</span>
-                                    <input
-                                      type="text"
-                                      placeholder="No Limit (+)"
-                                      className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg font-bold text-xs outline-none focus:ring-1 focus:ring-black text-center"
-                                      value={tier.maxPages === null ? '' : (tier.maxPages ?? '')}
-                                      onChange={(e) => {
-                                        const val = e.target.value.trim();
-                                        handleUpdateTier(idx, 'maxPages', val === '' ? null : (parseInt(val) || null));
-                                      }}
-                                    />
-                                  </div>
-                                </div>
 
-                                {/* Row 2: Rates per Sheet */}
-                                <div className="grid grid-cols-3 gap-2.5 pt-1">
+                                  <div className="grid grid-cols-2 gap-2">
+                                    <div>
+                                      <span className="text-[10px] text-slate-500 font-bold uppercase block mb-1">FROM (MIN PAGES)</span>
+                                      <input
+                                        type="number"
+                                        min="1"
+                                        className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg font-bold text-xs outline-none focus:ring-1 focus:ring-black text-center"
+                                        value={tier.minPages}
+                                        onChange={(e) => handleUpdateTier('single', idx, 'minPages', parseInt(e.target.value) || 1)}
+                                      />
+                                    </div>
+                                    <div>
+                                      <span className="text-[10px] text-slate-500 font-bold uppercase block mb-1">TO (MAX PAGES)</span>
+                                      <input
+                                        type="text"
+                                        placeholder="No Limit (+)"
+                                        className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg font-bold text-xs outline-none focus:ring-1 focus:ring-black text-center"
+                                        value={tier.maxPages === null ? '' : (tier.maxPages ?? '')}
+                                        onChange={(e) => {
+                                          const val = e.target.value.trim();
+                                          handleUpdateTier('single', idx, 'maxPages', val === '' ? null : (parseInt(val) || null));
+                                        }}
+                                      />
+                                    </div>
+                                  </div>
+
                                   <div>
-                                    <span className="text-[10px] text-slate-500 font-bold uppercase block mb-1">Single (₹)</span>
+                                    <span className="text-[10px] text-slate-500 font-bold uppercase block mb-1">SINGLE (₹)</span>
                                     <input
                                       type="number"
                                       min="0"
                                       step="0.1"
-                                      className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg font-bold text-xs outline-none focus:ring-1 focus:ring-black text-center"
-                                      value={tier.bwRate}
-                                      onChange={(e) => handleUpdateTier(idx, 'bwRate', parseFloat(e.target.value) || 0)}
-                                    />
-                                  </div>
-                                  <div>
-                                    <span className="text-[10px] text-slate-500 font-bold uppercase block mb-1">Double (₹)</span>
-                                    <input
-                                      type="number"
-                                      min="0"
-                                      step="0.1"
-                                      className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg font-bold text-xs outline-none focus:ring-1 focus:ring-black text-center"
-                                      value={tier.doubleSidedRate}
-                                      onChange={(e) => handleUpdateTier(idx, 'doubleSidedRate', parseFloat(e.target.value) || 0)}
-                                    />
-                                  </div>
-                                  <div>
-                                    <span className="text-[10px] text-slate-500 font-bold uppercase block mb-1">Color (₹)</span>
-                                    <input
-                                      type="number"
-                                      min="0"
-                                      step="0.5"
-                                      className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg font-bold text-xs outline-none focus:ring-1 focus:ring-black text-center"
-                                      value={tier.colorRate ?? vendorPricing.color}
-                                      onChange={(e) => handleUpdateTier(idx, 'colorRate', parseFloat(e.target.value) || 0)}
+                                      className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg font-bold text-xs outline-none focus:ring-1 focus:ring-black text-center text-emerald-700"
+                                      value={tier.rate}
+                                      onChange={(e) => handleUpdateTier('single', idx, 'rate', parseFloat(e.target.value) || 0)}
                                     />
                                   </div>
                                 </div>
-                              </div>
-                            ))}
+                              ))}
+                            </div>
 
                             <div className="flex gap-2 pt-1">
                               <button
                                 type="button"
-                                onClick={handleAddTier}
+                                onClick={() => handleAddTier('single')}
                                 className="flex-1 py-2 px-3 bg-white border border-dashed border-slate-300 hover:border-slate-400 hover:bg-slate-50 text-slate-700 text-xs font-bold rounded-xl flex items-center justify-center gap-1.5 transition-colors"
                               >
-                                <Plus size={13} /> Add Page Range Tier
+                                <Plus size={13} /> Add Single Side Range Tier
                               </button>
                               <button
                                 type="button"
-                                onClick={handleResetStandardTiers}
+                                onClick={() => handleResetStandardTiers('single')}
                                 className="py-2 px-3 bg-slate-100 hover:bg-slate-200 text-slate-600 text-[11px] font-medium rounded-xl transition-colors"
                               >
-                                Reset Standard
+                                Reset Defaults
                               </button>
                             </div>
                           </div>
                         )}
+                      </div>
+
+                      {/* 2. DOUBLE SIDE (B&W) SECTION */}
+                      <div className="p-4 bg-white rounded-2xl border border-slate-200 shadow-sm space-y-4">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+                          <div className="flex items-center gap-2">
+                            <span className="w-2.5 h-2.5 rounded-full bg-indigo-600" />
+                            <div>
+                              <span className="text-sm font-bold text-slate-900 block">Double Side (B&W / 2-Sided)</span>
+                              <span className="text-[10px] text-slate-500">Back-to-back black &amp; white printing</span>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2 bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-200">
+                            <span className="text-[11px] font-bold text-slate-500 uppercase">Standard Rate:</span>
+                            <div className="flex items-center gap-1 font-bold text-xs text-slate-900">
+                              <span>₹</span>
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.1"
+                                className="w-16 px-1.5 py-0.5 bg-white border border-slate-200 rounded-lg text-center font-bold text-xs outline-none focus:ring-1 focus:ring-black"
+                                value={vendorPricing.doubleSided}
+                                onChange={(e) => setVendorPricing({ ...vendorPricing, doubleSided: parseFloat(e.target.value) || 0 })}
+                              />
+                              <span className="text-slate-400 font-normal">/sheet</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Double Side Range Tiers */}
+                        {vendorPricing.enableTiers !== false && (
+                          <div className="space-y-3">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Page Ranges &amp; Bulk Rates</span>
+                              <span className="text-[10px] text-slate-500 font-medium">{(vendorPricing.doubleSideTiers || []).length} range tier{(vendorPricing.doubleSideTiers || []).length !== 1 ? 's' : ''}</span>
+                            </div>
+
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                              {(vendorPricing.doubleSideTiers || []).map((tier, idx) => (
+                                <div key={tier.id || idx} className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-2.5">
+                                  <div className="flex items-center justify-between pb-1 border-b border-slate-200">
+                                    <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                                      <span className="w-2 h-2 rounded-full bg-indigo-500" />
+                                      Tier {idx + 1}: {tier.maxPages ? `${tier.minPages} to ${tier.maxPages} pages` : `${tier.minPages}+ pages (Bulk)`}
+                                    </span>
+                                    {(vendorPricing.doubleSideTiers || []).length > 1 && (
+                                      <button
+                                        type="button"
+                                        onClick={() => handleDeleteTier('double', idx)}
+                                        className="text-rose-500 hover:text-rose-700 p-1 rounded-lg hover:bg-rose-50 transition-colors"
+                                        title="Delete Tier"
+                                      >
+                                        <Trash2 size={13} />
+                                      </button>
+                                    )}
+                                  </div>
+
+                                  <div className="grid grid-cols-2 gap-2">
+                                    <div>
+                                      <span className="text-[10px] text-slate-500 font-bold uppercase block mb-1">FROM (MIN PAGES)</span>
+                                      <input
+                                        type="number"
+                                        min="1"
+                                        className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg font-bold text-xs outline-none focus:ring-1 focus:ring-black text-center"
+                                        value={tier.minPages}
+                                        onChange={(e) => handleUpdateTier('double', idx, 'minPages', parseInt(e.target.value) || 1)}
+                                      />
+                                    </div>
+                                    <div>
+                                      <span className="text-[10px] text-slate-500 font-bold uppercase block mb-1">TO (MAX PAGES)</span>
+                                      <input
+                                        type="text"
+                                        placeholder="No Limit (+)"
+                                        className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg font-bold text-xs outline-none focus:ring-1 focus:ring-black text-center"
+                                        value={tier.maxPages === null ? '' : (tier.maxPages ?? '')}
+                                        onChange={(e) => {
+                                          const val = e.target.value.trim();
+                                          handleUpdateTier('double', idx, 'maxPages', val === '' ? null : (parseInt(val) || null));
+                                        }}
+                                      />
+                                    </div>
+                                  </div>
+
+                                  <div>
+                                    <span className="text-[10px] text-slate-500 font-bold uppercase block mb-1">DOUBLE (₹)</span>
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      step="0.1"
+                                      className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg font-bold text-xs outline-none focus:ring-1 focus:ring-black text-center text-indigo-700"
+                                      value={tier.rate}
+                                      onChange={(e) => handleUpdateTier('double', idx, 'rate', parseFloat(e.target.value) || 0)}
+                                    />
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+
+                            <div className="flex gap-2 pt-1">
+                              <button
+                                type="button"
+                                onClick={() => handleAddTier('double')}
+                                className="flex-1 py-2 px-3 bg-white border border-dashed border-slate-300 hover:border-slate-400 hover:bg-slate-50 text-slate-700 text-xs font-bold rounded-xl flex items-center justify-center gap-1.5 transition-colors"
+                              >
+                                <Plus size={13} /> Add Double Side Range Tier
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleResetStandardTiers('double')}
+                                className="py-2 px-3 bg-slate-100 hover:bg-slate-200 text-slate-600 text-[11px] font-medium rounded-xl transition-colors"
+                              >
+                                Reset Defaults
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* 3. COLOUR PRINT SECTION */}
+                      <div className="p-4 bg-white rounded-2xl border border-slate-200 shadow-sm space-y-4">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+                          <div className="flex items-center gap-2">
+                            <span className="w-2.5 h-2.5 rounded-full bg-pink-500" />
+                            <div>
+                              <span className="text-sm font-bold text-slate-900 block">Colour Print</span>
+                              <span className="text-[10px] text-slate-500">Full color documents &amp; presentations</span>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2 bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-200">
+                            <span className="text-[11px] font-bold text-slate-500 uppercase">Standard Rate:</span>
+                            <div className="flex items-center gap-1 font-bold text-xs text-slate-900">
+                              <span>₹</span>
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.5"
+                                className="w-16 px-1.5 py-0.5 bg-white border border-slate-200 rounded-lg text-center font-bold text-xs outline-none focus:ring-1 focus:ring-black"
+                                value={vendorPricing.color}
+                                onChange={(e) => setVendorPricing({ ...vendorPricing, color: parseFloat(e.target.value) || 0 })}
+                              />
+                              <span className="text-slate-400 font-normal">/page</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Colour Range Tiers */}
+                        {vendorPricing.enableTiers !== false && (
+                          <div className="space-y-3">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Page Ranges &amp; Bulk Rates</span>
+                              <span className="text-[10px] text-slate-500 font-medium">{(vendorPricing.colorTiers || []).length} range tier{(vendorPricing.colorTiers || []).length !== 1 ? 's' : ''}</span>
+                            </div>
+
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                              {(vendorPricing.colorTiers || []).map((tier, idx) => (
+                                <div key={tier.id || idx} className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-2.5">
+                                  <div className="flex items-center justify-between pb-1 border-b border-slate-200">
+                                    <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                                      <span className="w-2 h-2 rounded-full bg-pink-500" />
+                                      Tier {idx + 1}: {tier.maxPages ? `${tier.minPages} to ${tier.maxPages} pages` : `${tier.minPages}+ pages (Bulk)`}
+                                    </span>
+                                    {(vendorPricing.colorTiers || []).length > 1 && (
+                                      <button
+                                        type="button"
+                                        onClick={() => handleDeleteTier('color', idx)}
+                                        className="text-rose-500 hover:text-rose-700 p-1 rounded-lg hover:bg-rose-50 transition-colors"
+                                        title="Delete Tier"
+                                      >
+                                        <Trash2 size={13} />
+                                      </button>
+                                    )}
+                                  </div>
+
+                                  <div className="grid grid-cols-2 gap-2">
+                                    <div>
+                                      <span className="text-[10px] text-slate-500 font-bold uppercase block mb-1">FROM (MIN PAGES)</span>
+                                      <input
+                                        type="number"
+                                        min="1"
+                                        className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg font-bold text-xs outline-none focus:ring-1 focus:ring-black text-center"
+                                        value={tier.minPages}
+                                        onChange={(e) => handleUpdateTier('color', idx, 'minPages', parseInt(e.target.value) || 1)}
+                                      />
+                                    </div>
+                                    <div>
+                                      <span className="text-[10px] text-slate-500 font-bold uppercase block mb-1">TO (MAX PAGES)</span>
+                                      <input
+                                        type="text"
+                                        placeholder="No Limit (+)"
+                                        className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg font-bold text-xs outline-none focus:ring-1 focus:ring-black text-center"
+                                        value={tier.maxPages === null ? '' : (tier.maxPages ?? '')}
+                                        onChange={(e) => {
+                                          const val = e.target.value.trim();
+                                          handleUpdateTier('color', idx, 'maxPages', val === '' ? null : (parseInt(val) || null));
+                                        }}
+                                      />
+                                    </div>
+                                  </div>
+
+                                  <div>
+                                    <span className="text-[10px] text-slate-500 font-bold uppercase block mb-1">COLOR (₹)</span>
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      step="0.5"
+                                      className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg font-bold text-xs outline-none focus:ring-1 focus:ring-black text-center text-pink-700"
+                                      value={tier.rate}
+                                      onChange={(e) => handleUpdateTier('color', idx, 'rate', parseFloat(e.target.value) || 0)}
+                                    />
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+
+                            <div className="flex gap-2 pt-1">
+                              <button
+                                type="button"
+                                onClick={() => handleAddTier('color')}
+                                className="flex-1 py-2 px-3 bg-white border border-dashed border-slate-300 hover:border-slate-400 hover:bg-slate-50 text-slate-700 text-xs font-bold rounded-xl flex items-center justify-center gap-1.5 transition-colors"
+                              >
+                                <Plus size={13} /> Add Colour Range Tier
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleResetStandardTiers('color')}
+                                className="py-2 px-3 bg-slate-100 hover:bg-slate-200 text-slate-600 text-[11px] font-medium rounded-xl transition-colors"
+                              >
+                                Reset Defaults
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* 4. BLANK A4 SHEET SECTION */}
+                      <div className="p-4 bg-white rounded-2xl border border-slate-200 shadow-sm flex items-center justify-between">
+                        <div>
+                          <span className="text-xs font-bold text-slate-900 block">Blank A4 Sheet Price</span>
+                          <span className="text-[10px] text-slate-500">Rate per blank paper sheet</span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-bold text-xs">₹</span>
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.5"
+                            className="w-20 px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg font-bold text-xs outline-none focus:ring-1 focus:ring-black text-center"
+                            value={vendorPricing.a4Sheet}
+                            onChange={(e) => setVendorPricing({ ...vendorPricing, a4Sheet: parseFloat(e.target.value) || 0 })}
+                          />
+                        </div>
                       </div>
 
                       {/* Book Binding & Finishing Services Editor */}
@@ -1931,7 +2265,7 @@ const App: React.FC = () => {
               </form>
 
               {/* QR Code Standee Generator */}
-              <div className="w-full md:w-72 flex flex-col items-center justify-between p-6 bg-slate-50 rounded-2xl border border-slate-200 space-y-4">
+              <div className="w-full lg:w-80 flex-shrink-0 flex flex-col items-center justify-between p-6 bg-slate-50 rounded-2xl border border-slate-200 space-y-4 self-start lg:sticky lg:top-0">
                 <div className="w-full text-center">
                   <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
                     Store Standee QR
