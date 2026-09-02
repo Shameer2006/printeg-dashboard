@@ -763,22 +763,69 @@ const App: React.FC = () => {
     setCurrentPage(1);
   }, [searchQuery, statusFilter]);
 
-  // Fetch Clients from Firestore
+  // Fetch Clients & Vendors from Firestore with Bidirectional Sync
   useEffect(() => {
-    const q = query(collection(db, "clients"));
-    const unsubscribe = onSnapshot(q, (querySnapshot) => {
-      const clientsData: Client[] = [];
-      querySnapshot.forEach((docSnap) => {
+    let clientsData: Client[] = [];
+    let vendorsData: any[] = [];
+
+    const mergeAndSet = () => {
+      const existingIds = new Set(clientsData.map(c => c.id));
+      const existingSlugs = new Set(clientsData.map(c => c.slug || c.id));
+
+      const merged = [...clientsData];
+      vendorsData.forEach(v => {
+        const vSlug = v.slug || v.id;
+        if (!existingIds.has(v.id) && !existingSlugs.has(vSlug)) {
+          // Include any vendor document so admin can view, manage, and delete it
+          merged.push({
+            id: v.id,
+            slug: vSlug,
+            shopName: v.storeName || v.shopName || v.id,
+            ownerName: v.ownerName || 'Merchant',
+            phoneNumber: v.phone || v.phoneNumber || 'N/A',
+            location: v.address || 'Registered Store',
+            status: v.isActive !== false ? 'active' : 'inactive',
+            deviceId: `DEV-${vSlug.toUpperCase().slice(0, 6)}`,
+            planType: 'Monthly',
+            expiryDate: '2026-12-31',
+            createdAt: v.createdAt || new Date().toISOString(),
+            pricing: v.pricing,
+            printers: [],
+            reports: [],
+            history: [],
+            iconType: 'storefront',
+          } as Client);
+        }
+      });
+      setClients(merged);
+      setDbStatus('connected');
+    };
+
+    const unsubClients = onSnapshot(query(collection(db, "clients")), (snap) => {
+      clientsData = [];
+      snap.forEach((docSnap) => {
         clientsData.push({ id: docSnap.id, ...docSnap.data() } as Client);
       });
-      setClients(clientsData);
-      setDbStatus('connected');
+      mergeAndSet();
     }, (error) => {
       console.error("Error fetching clients:", error);
       setDbStatus('error');
     });
 
-    return () => unsubscribe();
+    const unsubVendors = onSnapshot(query(collection(db, "vendors")), (snap) => {
+      vendorsData = [];
+      snap.forEach((docSnap) => {
+        vendorsData.push({ id: docSnap.id, ...docSnap.data() });
+      });
+      mergeAndSet();
+    }, (error) => {
+      console.error("Error fetching vendors:", error);
+    });
+
+    return () => {
+      unsubClients();
+      unsubVendors();
+    };
   }, []);
 
   // Fetch Orders from top-level `orders` collection
