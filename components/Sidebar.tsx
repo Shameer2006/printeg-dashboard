@@ -32,8 +32,8 @@ const SidebarItem: React.FC<SidebarItemProps> = ({ icon, label, active, onClick 
 );
 
 interface SidebarProps {
-  activeView: 'dashboard' | 'customers' | 'reports' | 'transactions' | 'superuser';
-  setActiveView: (view: 'dashboard' | 'customers' | 'reports' | 'transactions' | 'superuser') => void;
+  activeView: 'dashboard' | 'customers' | 'reports' | 'transactions' | 'superuser' | 'analytics';
+  setActiveView: (view: 'dashboard' | 'customers' | 'reports' | 'transactions' | 'superuser' | 'analytics') => void;
   onSignOut?: () => void;
   userRole?: 'admin' | 'merchant';
   merchantName?: string;
@@ -92,9 +92,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <>
                 <SidebarItem
                   icon={<LayoutGrid size={20} />}
-                  label="Live Orders & Stats"
-                  active={true}
-                  onClick={() => {}}
+                  label="Live Orders & Queue"
+                  active={activeView === 'dashboard'}
+                  onClick={() => setActiveView('dashboard')}
+                />
+                <SidebarItem
+                  icon={<BarChart3 size={20} />}
+                  label="Analytics & Stacks"
+                  active={activeView === 'analytics'}
+                  onClick={() => setActiveView('analytics')}
                 />
               </>
             ) : (
@@ -104,6 +110,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   label="Dashboard Overview"
                   active={activeView === 'dashboard'}
                   onClick={() => setActiveView('dashboard')}
+                />
+                <SidebarItem
+                  icon={<BarChart3 size={20} />}
+                  label="Store Analytics & Stacks"
+                  active={activeView === 'analytics'}
+                  onClick={() => setActiveView('analytics')}
                 />
                 <SidebarItem
                   icon={<Users size={20} />}

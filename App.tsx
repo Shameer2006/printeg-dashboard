@@ -48,6 +48,7 @@ import { QRCodeCanvas } from 'qrcode.react';
 import { Sidebar } from './components/Sidebar';
 import { StatCard } from './components/StatCard';
 import { ClientCard } from './components/ClientCard';
+import { AnalyticsPage } from './components/AnalyticsPage';
 import { Client, StatusType, PrintPrices, VendorPricing, PriceTier, PageRangeTier, BindingPricing, BindingItemConfig, SpiralRangeTier, Superuser } from './types';
 import { db } from './src/lib/firebase';
 import { collection, collectionGroup, onSnapshot, query, addDoc, deleteDoc, updateDoc, doc, setDoc, getDocs, where } from 'firebase/firestore';
@@ -437,7 +438,7 @@ const App: React.FC = () => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [userRole, setUserRole] = useState<'admin' | 'merchant'>('admin');
   const [loggedInMerchant, setLoggedInMerchant] = useState<Client | null>(null);
-  const [activeView, setActiveView] = useState<'dashboard' | 'customers' | 'reports' | 'transactions' | 'superuser'>('dashboard');
+  const [activeView, setActiveView] = useState<'dashboard' | 'customers' | 'reports' | 'transactions' | 'superuser' | 'analytics'>('dashboard');
   const [clients, setClients] = useState<Client[]>([]);
   const [allOrders, setAllOrders] = useState<any[]>([]);
   const [allPrinterDocs, setAllPrinterDocs] = useState<any[]>([]);
@@ -913,7 +914,18 @@ const App: React.FC = () => {
       // 1. First add collectionGroup orders (covers vendors/{slug}/orders/1234, etc.)
       groupData.forEach(o => {
         const key = String(o.orderCode || o.id);
-        orderMap.set(key, o);
+        const existing = orderMap.get(key);
+        if (!existing) {
+          orderMap.set(key, o);
+        } else {
+          // Prefer doc that has valid vendorSlug and vendor subcollection path
+          orderMap.set(key, {
+            ...existing,
+            ...o,
+            vendorSlug: o.vendorSlug || existing.vendorSlug,
+            _docPath: (typeof o._docPath === 'string' && o._docPath.startsWith('vendors/')) ? o._docPath : (existing._docPath || o._docPath)
+          });
+        }
       });
       // 2. Merge root orders (orders/1234)
       rootData.forEach(o => {
@@ -921,8 +933,13 @@ const App: React.FC = () => {
         if (!orderMap.has(key)) {
           orderMap.set(key, o);
         } else {
-          // Merge root data with subcollection data
-          orderMap.set(key, { ...o, ...orderMap.get(key) });
+          const existing = orderMap.get(key);
+          orderMap.set(key, {
+            ...o,
+            ...existing,
+            vendorSlug: existing.vendorSlug || o.vendorSlug,
+            _docPath: (typeof existing._docPath === 'string' && existing._docPath.startsWith('vendors/')) ? existing._docPath : (o._docPath || existing._docPath)
+          });
         }
       });
       const finalOrders = Array.from(orderMap.values());
@@ -943,11 +960,11 @@ const App: React.FC = () => {
           pathVendorSlug = pathParts[1];
         }
         groupData.push({
+          ...d,
           id: docSnap.id,
           orderCode: d.orderCode || docSnap.id,
           vendorSlug: d.vendorSlug || pathVendorSlug,
           _docPath: path,
-          ...d
         });
       });
       mergeOrders();
@@ -3273,98 +3290,100 @@ const App: React.FC = () => {
             </button>
           </div>
 
-          <header className="flex flex-col md:flex-row md:items-end justify-between mb-10 gap-6">
-            <div className="max-w-xl">
-              {selectedClient && userRole === 'admin' && (
-                <button onClick={() => setSelectedClient(null)} className="flex items-center gap-2 text-slate-500 hover:text-black mb-4 font-bold">
-                  <ArrowLeft size={18} /> Back to Directory
-                </button>
-              )}
-              <div className="flex flex-col gap-1">
-                <div className="flex items-center gap-3">
-                  <h2 className="text-4xl font-display font-bold text-slate-900 mb-1">
-                    {selectedClient ? selectedClient.shopName : (activeView === 'customers' ? 'Client Directory' : activeView === 'reports' ? 'Support Inbox' : activeView === 'transactions' ? 'Transaction Logs' : activeView === 'superuser' ? 'Superuser Credentials' : 'Network Overview')}
-                  </h2>
-                  {userRole === 'merchant' && (
-                    <span className="bg-emerald-50 text-emerald-700 text-xs px-2.5 py-1 rounded-full font-bold border border-emerald-200 flex items-center gap-1.5">
-                      <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                      Live Shop
-                    </span>
-                  )}
-                </div>
-                {selectedClient && (
-                  <div className="flex flex-wrap items-center gap-3 text-sm font-medium text-slate-500 mt-1">
-                    <span className="flex items-center gap-1.5 bg-slate-100 px-3 py-1 rounded-lg text-slate-600 text-xs">
-                      <Printer size={13} /> {selectedClient.printers?.length || 0} Printers
-                    </span>
-                    <span className="flex items-center gap-1.5 bg-slate-100 px-3 py-1 rounded-lg text-slate-600 text-xs">
-                      <MapPin size={13} /> {selectedClient.location || 'Chennai'}
-                    </span>
-                    <a
-                      href={`https://printeg.in/store/${selectedClient.slug || selectedClient.id}`}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="flex items-center gap-1 text-slate-600 hover:text-black hover:underline text-xs"
-                    >
-                      printeg.in/store/{selectedClient.slug || selectedClient.id} <ExternalLink size={12} />
-                    </a>
-                  </div>
-                )}
-                <p className="text-slate-500 text-sm mt-2">
-                  {selectedClient
-                    ? (userRole === 'merchant' ? 'Live incoming orders queue, auto-refreshed with incoming sound chime.' : `Full audit log for Device ID: ${selectedClient.deviceId}`)
-                    : (activeView === 'transactions' ? 'Real-time monitoring of all print jobs, payments, and system errors.' : activeView === 'superuser' ? 'Manage master Super Admin user ID and password stored in Firebase Firestore superuser collection.' : 'Manage and monitor all printer IoT deployments across your network.')}
-                </p>
-                <div className="flex items-center gap-2 mt-2">
-                  <div className={`w-2 h-2 rounded-full ${dbStatus === 'connected' ? 'bg-emerald-500' : dbStatus === 'error' ? 'bg-rose-500' : 'bg-amber-400 animate-pulse'}`} />
-                  <span className={`text-xs font-bold ${dbStatus === 'connected' ? 'text-emerald-600' : dbStatus === 'error' ? 'text-rose-600' : 'text-amber-600'}`}>
-                    {dbStatus === 'connected' ? 'Firestore Connected' : dbStatus === 'error' ? 'Firestore Error — check Rules' : 'Connecting to Firestore...'}
-                  </span>
-                </div>
-              </div>
-            </div>
-            {activeView === 'customers' && !selectedClient && userRole === 'admin' && (
-              <button onClick={() => setShowOnboardModal(true)} className="flex items-center justify-center gap-2 bg-black text-white px-8 py-4 rounded-full font-bold hover:bg-slate-800 transition-all shadow-xl shadow-black/10 active:scale-95 w-full md:w-auto">
-                <Plus size={20} /> Onboard Shop
-              </button>
-            )}
-            {/* Header Actions for Selected Client / Merchant */}
-            {selectedClient && (
-              <div className="flex flex-wrap items-center gap-2.5 w-full md:w-auto">
-                <button
-                  onClick={() => handleOpenCredentialsModal(selectedClient)}
-                  className="flex items-center justify-center gap-1.5 bg-slate-900 text-white px-4 py-2.5 rounded-xl font-bold hover:bg-black transition-all shadow-sm text-xs"
-                >
-                  <Lock size={14} /> Credentials
-                </button>
-                <button
-                  onClick={handleOpenShopSettings}
-                  className="flex items-center justify-center gap-1.5 bg-white text-slate-700 border border-slate-200 px-4 py-2.5 rounded-xl font-bold hover:bg-slate-50 transition-all shadow-sm text-xs"
-                >
-                  <Settings size={14} /> Rates & QR
-                </button>
-                {userRole === 'admin' && (
-                  <button
-                    onClick={() => setShowAddPrinterModal(true)}
-                    className="flex items-center justify-center gap-1.5 bg-black text-white px-4 py-2.5 rounded-xl font-bold hover:bg-slate-800 transition-all shadow-sm text-xs"
-                  >
-                    <Plus size={14} /> Add Printer
+          {activeView !== 'analytics' && (
+            <header className="flex flex-col md:flex-row md:items-end justify-between mb-10 gap-6">
+              <div className="max-w-xl">
+                {selectedClient && userRole === 'admin' && (
+                  <button onClick={() => setSelectedClient(null)} className="flex items-center gap-2 text-slate-500 hover:text-black mb-4 font-bold">
+                    <ArrowLeft size={18} /> Back to Directory
                   </button>
                 )}
-                <a
-                  href={`https://printeg.in/store/${selectedClient.slug || selectedClient.id}`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="flex items-center justify-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 px-4 py-2.5 rounded-xl font-bold transition-all text-xs"
-                >
-                  <ExternalLink size={14} /> Storefront
-                </a>
+                <div className="flex flex-col gap-1">
+                  <div className="flex items-center gap-3">
+                    <h2 className="text-4xl font-display font-bold text-slate-900 mb-1">
+                      {selectedClient ? selectedClient.shopName : (activeView === 'customers' ? 'Client Directory' : activeView === 'reports' ? 'Support Inbox' : activeView === 'transactions' ? 'Transaction Logs' : activeView === 'superuser' ? 'Superuser Credentials' : 'Network Overview')}
+                    </h2>
+                    {userRole === 'merchant' && (
+                      <span className="bg-emerald-50 text-emerald-700 text-xs px-2.5 py-1 rounded-full font-bold border border-emerald-200 flex items-center gap-1.5">
+                        <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                        Live Shop
+                      </span>
+                    )}
+                  </div>
+                  {selectedClient && (
+                    <div className="flex flex-wrap items-center gap-3 text-sm font-medium text-slate-500 mt-1">
+                      <span className="flex items-center gap-1.5 bg-slate-100 px-3 py-1 rounded-lg text-slate-600 text-xs">
+                        <Printer size={13} /> {selectedClient.printers?.length || 0} Printers
+                      </span>
+                      <span className="flex items-center gap-1.5 bg-slate-100 px-3 py-1 rounded-lg text-slate-600 text-xs">
+                        <MapPin size={13} /> {selectedClient.location || 'Chennai'}
+                      </span>
+                      <a
+                        href={`https://printeg.in/store/${selectedClient.slug || selectedClient.id}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="flex items-center gap-1 text-slate-600 hover:text-black hover:underline text-xs"
+                      >
+                        printeg.in/store/{selectedClient.slug || selectedClient.id} <ExternalLink size={12} />
+                      </a>
+                    </div>
+                  )}
+                  <p className="text-slate-500 text-sm mt-2">
+                    {selectedClient
+                      ? (userRole === 'merchant' ? 'Live incoming orders queue, auto-refreshed with incoming sound chime.' : `Full audit log for Device ID: ${selectedClient.deviceId}`)
+                      : (activeView === 'transactions' ? 'Real-time monitoring of all print jobs, payments, and system errors.' : activeView === 'superuser' ? 'Manage master Super Admin user ID and password stored in Firebase Firestore superuser collection.' : 'Manage and monitor all printer IoT deployments across your network.')}
+                  </p>
+                  <div className="flex items-center gap-2 mt-2">
+                    <div className={`w-2 h-2 rounded-full ${dbStatus === 'connected' ? 'bg-emerald-500' : dbStatus === 'error' ? 'bg-rose-500' : 'bg-amber-400 animate-pulse'}`} />
+                    <span className={`text-xs font-bold ${dbStatus === 'connected' ? 'text-emerald-600' : dbStatus === 'error' ? 'text-rose-600' : 'text-amber-600'}`}>
+                      {dbStatus === 'connected' ? 'Firestore Connected' : dbStatus === 'error' ? 'Firestore Error — check Rules' : 'Connecting to Firestore...'}
+                    </span>
+                  </div>
+                </div>
               </div>
-            )}
-          </header>
+              {activeView === 'customers' && !selectedClient && userRole === 'admin' && (
+                <button onClick={() => setShowOnboardModal(true)} className="flex items-center justify-center gap-2 bg-black text-white px-8 py-4 rounded-full font-bold hover:bg-slate-800 transition-all shadow-xl shadow-black/10 active:scale-95 w-full md:w-auto">
+                  <Plus size={20} /> Onboard Shop
+                </button>
+              )}
+              {/* Header Actions for Selected Client / Merchant */}
+              {selectedClient && (
+                <div className="flex flex-wrap items-center gap-2.5 w-full md:w-auto">
+                  <button
+                    onClick={() => handleOpenCredentialsModal(selectedClient)}
+                    className="flex items-center justify-center gap-1.5 bg-slate-900 text-white px-4 py-2.5 rounded-xl font-bold hover:bg-black transition-all shadow-sm text-xs"
+                  >
+                    <Lock size={14} /> Credentials
+                  </button>
+                  <button
+                    onClick={handleOpenShopSettings}
+                    className="flex items-center justify-center gap-1.5 bg-white text-slate-700 border border-slate-200 px-4 py-2.5 rounded-xl font-bold hover:bg-slate-50 transition-all shadow-sm text-xs"
+                  >
+                    <Settings size={14} /> Rates & QR
+                  </button>
+                  {userRole === 'admin' && (
+                    <button
+                      onClick={() => setShowAddPrinterModal(true)}
+                      className="flex items-center justify-center gap-1.5 bg-black text-white px-4 py-2.5 rounded-xl font-bold hover:bg-slate-800 transition-all shadow-sm text-xs"
+                    >
+                      <Plus size={14} /> Add Printer
+                    </button>
+                  )}
+                  <a
+                    href={`https://printeg.in/store/${selectedClient.slug || selectedClient.id}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex items-center justify-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 px-4 py-2.5 rounded-xl font-bold transition-all text-xs"
+                  >
+                    <ExternalLink size={14} /> Storefront
+                  </a>
+                </div>
+              )}
+            </header>
+          )}
 
           {/* Merged printer/report counts for the selected client */}
-          {(() => {
+          {activeView !== 'analytics' && (() => {
             const clientPrintersFromCollection = selectedClient
               ? allPrinterDocs.filter(p => p.clientId === selectedClient.id || p.shopName === selectedClient.shopName)
               : [];
@@ -3551,7 +3570,7 @@ const App: React.FC = () => {
             </>
           )}
 
-          {selectedClient && (() => {
+          {selectedClient && activeView === 'dashboard' && (() => {
             // Merge printers from top-level `printers` collection + nested client.printers[]
             const fromCollection = allPrinterDocs.filter(
               p => p.clientId === selectedClient.id || p.shopName === selectedClient.shopName
@@ -4044,6 +4063,16 @@ const App: React.FC = () => {
               </div>
             );
           })()}
+
+          {activeView === 'analytics' && (
+            <AnalyticsPage
+              allOrders={allOrders}
+              clients={clients}
+              selectedClient={selectedClient}
+              userRole={userRole}
+              onSelectClient={(c) => setSelectedClient(c)}
+            />
+          )}
 
           {activeView === 'reports' && (
             <div className="space-y-6 animate-in fade-in duration-500">
