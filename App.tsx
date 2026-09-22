@@ -654,9 +654,9 @@ const App: React.FC = () => {
       );
     };
 
-    // Filter raw orders for this shop
-    const shopOrders = allOrders.filter((order) => {
-      const isThisShop =
+    // Filter ALL orders for this shop (paid + pending) for page/payout counts
+    const shopAllOrders = allOrders.filter((order) => {
+      return (
         order.vendorSlug === slug ||
         order.vendorSlug === selectedClient.id ||
         order.clientId === selectedClient.id ||
@@ -666,27 +666,42 @@ const App: React.FC = () => {
           order._docPath.startsWith(`vendors/${slug}/`) ||
           order._docPath.startsWith(`vendors/${selectedClient.id}/`) ||
           order._docPath.startsWith(`clients/${selectedClient.id}/`)
-        ));
-      const isPaid = order.payment_status === "PAID" || order.paymentStatus === "Paid";
-      return isThisShop && isPaid;
+        ))
+      );
     });
 
+    // Paid-only orders (for revenue/margin accuracy)
+    const shopOrders = shopAllOrders.filter(
+      (o) => o.payment_status === "PAID" || o.paymentStatus === "Paid"
+    );
+
+    // Today: use all orders (paid+pending) so pages & payout are always visible
+    const todayAllOrders = shopAllOrders.filter((o) =>
+      isTodayDate(o.createdAt || o.paid_at || o.timestamp)
+    );
     const todayOrders = shopOrders.filter((o) =>
       isTodayDate(o.createdAt || o.paid_at || o.timestamp)
     );
 
     const todayRevenue = todayOrders.reduce((sum, o) => sum + (Number(o.amount) || Number(o.cost) || 0), 0);
-    const todayPages = todayOrders.reduce((sum, o) => {
-      const p = Number(o.totalPages || o.pages || 0);
+
+    // Pages: count all today's orders (paid + pending) so queue pages are visible
+    const todayPages = todayAllOrders.reduce((sum, o) => {
+      const p = Number(o.totalPages || o.pages || o.pageCount || 0);
       const c = Number(o.copies || 1);
       return sum + (p * c);
     }, 0);
-    const todayVendorPayout = todayOrders.reduce((sum, o) => {
+
+    // Payout: use vendorAmount from all today's orders (it's set at order creation)
+    const todayVendorPayout = todayAllOrders.reduce((sum, o) => {
       const v = typeof o.vendorAmount === "number"
         ? o.vendorAmount
-        : (typeof o.subtotal === "number" ? o.subtotal : (Number(o.amount) || 0) / 1.08);
+        : (typeof o.subtotal === "number"
+          ? o.subtotal
+          : (Number(o.amount) || 0));
       return sum + v;
     }, 0);
+
     const todayPlatformMargin = todayOrders.reduce((sum, o) => {
       const fee = typeof o.platformFee === "number"
         ? o.platformFee
@@ -694,16 +709,31 @@ const App: React.FC = () => {
       return sum + fee;
     }, 0);
 
+    const todayOrderCount = todayAllOrders.length;
+    const todayPaidOrderCount = todayOrders.length;
+
+    // Payout split: PAID-only (confirmed money) vs all-orders (expected)
+    const todayPaidPayout = todayOrders.reduce((sum, o) => {
+      const v = typeof o.vendorAmount === "number"
+        ? o.vendorAmount
+        : (typeof o.subtotal === "number" ? o.subtotal : (Number(o.amount) || 0));
+      return sum + v;
+    }, 0);
+
+    // All-time: pages from ALL orders (job is queued = pages will be printed)
     const allTimeRevenue = shopOrders.reduce((sum, o) => sum + (Number(o.amount) || Number(o.cost) || 0), 0);
-    const allTimePages = shopOrders.reduce((sum, o) => {
-      const p = Number(o.totalPages || o.pages || 0);
+    const allTimePages = shopAllOrders.reduce((sum, o) => {
+      const p = Number(o.totalPages || o.pages || o.pageCount || 0);
       const c = Number(o.copies || 1);
       return sum + (p * c);
     }, 0);
-    const allTimeVendorPayout = shopOrders.reduce((sum, o) => {
+    // All-time PAID payout (confirmed earnings only)
+    const allTimePaidPayout = shopOrders.reduce((sum, o) => {
       const v = typeof o.vendorAmount === "number"
         ? o.vendorAmount
-        : (typeof o.subtotal === "number" ? o.subtotal : (Number(o.amount) || 0) / 1.08);
+        : (typeof o.subtotal === "number"
+          ? o.subtotal
+          : (Number(o.amount) || 0));
       return sum + v;
     }, 0);
     const allTimePlatformMargin = shopOrders.reduce((sum, o) => {
@@ -717,16 +747,19 @@ const App: React.FC = () => {
       today: {
         revenue: todayRevenue,
         pages: todayPages,
-        vendorPayout: todayVendorPayout,
+        vendorPayout: todayVendorPayout,       // all today's orders (pending+paid)
+        paidPayout: todayPaidPayout,            // PAID orders only
         platformMargin: todayPlatformMargin,
-        orderCount: todayOrders.length,
+        orderCount: todayOrderCount,            // all today's orders
+        paidOrderCount: todayPaidOrderCount,    // PAID orders only
       },
       allTime: {
         revenue: allTimeRevenue,
-        pages: allTimePages,
-        vendorPayout: allTimeVendorPayout,
+        pages: allTimePages,                    // all orders (pages are queued/printed)
+        vendorPayout: allTimePaidPayout,        // PAID orders only (confirmed earnings)
         platformMargin: allTimePlatformMargin,
-        orderCount: shopOrders.length,
+        orderCount: shopAllOrders.length,
+        paidOrderCount: shopOrders.length,
       }
     };
   }, [selectedClient, allOrders]);
@@ -3440,32 +3473,33 @@ const App: React.FC = () => {
                   ) : (
                     <>
                       <StatCard
-                        label="Today's Payout"
-                        value={`₹${(selectedShopDailyStats?.today.vendorPayout || 0).toFixed(2)}`}
-                        subValue={`${selectedShopDailyStats?.today.orderCount || 0} orders today`}
+                        label="Confirmed Payout"
+                        value={`₹${(selectedShopDailyStats?.allTime.vendorPayout || 0).toFixed(2)}`}
+                        subValue={`PAID orders only · ${selectedShopDailyStats?.allTime.paidOrderCount || 0} orders`}
                         icon={<Receipt size={18} />}
                         iconBg="bg-emerald-50"
                         iconColor="text-emerald-600"
                       />
                       <StatCard
-                        label="Today's Prints"
-                        value={`${(selectedShopDailyStats?.today.pages || 0).toLocaleString()} pgs`}
-                        subValue="Live queue active"
+                        label="Total Pages Printed"
+                        value={`${(selectedShopDailyStats?.allTime.pages || 0).toLocaleString()} pgs`}
+                        subValue={`All orders · Today: ${(selectedShopDailyStats?.today.pages || 0).toLocaleString()} pgs`}
                         icon={<Printer size={18} />}
                         iconBg="bg-blue-50"
                         iconColor="text-blue-600"
                       />
                       <StatCard
-                        label="All-Time Earnings"
-                        value={`₹${(selectedShopDailyStats?.allTime.vendorPayout || 0).toFixed(2)}`}
-                        subValue={`${(selectedShopDailyStats?.allTime.pages || 0).toLocaleString()} total pgs`}
+                        label="Pending Earnings"
+                        value={`₹${(selectedShopDailyStats?.today.vendorPayout || 0).toFixed(2)}`}
+                        subValue={`Today: ${selectedShopDailyStats?.today.orderCount || 0} orders (paid+pending)`}
                         icon={<TrendingUp size={18} />}
-                        iconBg="bg-purple-50"
-                        iconColor="text-purple-600"
+                        iconBg="bg-amber-50"
+                        iconColor="text-amber-600"
                       />
                       <StatCard
                         label="Deployed Printers"
                         value={mergedPrinters.length.toString()}
+                        subValue="Active devices"
                         icon={<LayoutGrid size={18} />}
                         iconBg="bg-slate-100"
                         iconColor="text-slate-700"

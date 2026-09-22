@@ -4,6 +4,7 @@ import React from 'react';
 interface StatCardProps {
   label: string;
   value: string;
+  subValue?: string;
   icon: React.ReactNode;
   iconBg: string;
   iconColor: string;
@@ -13,6 +14,7 @@ interface StatCardProps {
 export const StatCard: React.FC<StatCardProps> = ({
   label,
   value,
+  subValue,
   icon,
   iconBg,
   iconColor,
@@ -27,6 +29,9 @@ export const StatCard: React.FC<StatCardProps> = ({
       <h3 className={`text-2xl font-display font-bold ${highlight ? 'text-rose-600' : 'text-slate-900'}`}>
         {value}
       </h3>
+      {subValue && (
+        <p className="text-slate-400 text-xs mt-1 font-medium">{subValue}</p>
+      )}
     </div>
   );
 };
