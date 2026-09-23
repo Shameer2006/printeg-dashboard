@@ -42,16 +42,19 @@ import {
   Sparkles,
   ShieldCheck,
   Key,
-  Shield
+  Shield,
+  UserCheck,
+  Zap
 } from 'lucide-react';
 import { QRCodeCanvas } from 'qrcode.react';
 import { Sidebar } from './components/Sidebar';
 import { StatCard } from './components/StatCard';
 import { ClientCard } from './components/ClientCard';
 import { AnalyticsPage } from './components/AnalyticsPage';
-import { Client, StatusType, PrintPrices, VendorPricing, PriceTier, PageRangeTier, BindingPricing, BindingItemConfig, SpiralRangeTier, Superuser } from './types';
+import { FinancePage, PendingPayout, VendorWalletInfo } from './components/FinancePage';
+import { Client, StatusType, PrintPrices, VendorPricing, PriceTier, PageRangeTier, BindingPricing, BindingItemConfig, SpiralRangeTier, Superuser, FinanceMember, WalletTransaction, FinancePayout, MerchantCredentials, UserRole } from './types';
 import { db } from './src/lib/firebase';
-import { collection, collectionGroup, onSnapshot, query, addDoc, deleteDoc, updateDoc, doc, setDoc, getDocs, where } from 'firebase/firestore';
+import { collection, collectionGroup, onSnapshot, query, addDoc, deleteDoc, updateDoc, doc, setDoc, getDocs, where, increment } from 'firebase/firestore';
 
 const DEFAULT_SINGLE_SIDE_TIERS: PageRangeTier[] = [
   { id: '1', minPages: 1, maxPages: 10, rate: 1.5 },
@@ -129,7 +132,7 @@ const ITEMS_PER_PAGE = 5;
  * Defined outside App to ensure it is stable and doesn't remount on App state changes.
  */
 const LoginPage: React.FC<{
-  onLogin: (role: 'admin' | 'merchant', merchant?: Client) => void;
+  onLogin: (role: 'admin' | 'merchant' | 'finance', merchant?: Client, financeMember?: any) => void;
   clients: Client[];
 }> = ({ onLogin, clients }) => {
   const [userId, setUserId] = useState('');
@@ -213,6 +216,25 @@ const LoginPage: React.FC<{
         setIsLoading(false);
         onLogin('merchant', matchedClient);
         return;
+      }
+
+      // 3. Finance Team Authentication
+      try {
+        const financeSnap = await getDocs(collection(db, 'finance_team'));
+        let matchedFinance: any = null;
+        financeSnap.forEach(fDoc => {
+          const fd = fDoc.data();
+          if ((fd.username || '').trim().toLowerCase() === cleanUser && String(fd.password || '').trim() === cleanPass) {
+            matchedFinance = { id: fDoc.id, ...fd };
+          }
+        });
+        if (matchedFinance) {
+          setIsLoading(false);
+          onLogin('finance', undefined, matchedFinance);
+          return;
+        }
+      } catch (fErr) {
+        console.warn('finance_team check error:', fErr);
       }
 
       setError('Invalid User ID or Password. For Super Admin enter your Superuser credentials, or enter your shop\'s Merchant User ID & Password.');
@@ -436,13 +458,20 @@ const LoginPage: React.FC<{
  */
 const App: React.FC = () => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [userRole, setUserRole] = useState<'admin' | 'merchant'>('admin');
+  const [userRole, setUserRole] = useState<'admin' | 'merchant' | 'finance'>('admin');
   const [loggedInMerchant, setLoggedInMerchant] = useState<Client | null>(null);
-  const [activeView, setActiveView] = useState<'dashboard' | 'customers' | 'reports' | 'transactions' | 'superuser' | 'analytics'>('dashboard');
+  const [loggedInFinanceUser, setLoggedInFinanceUser] = useState<FinanceMember | null>(null);
+  const [activeView, setActiveView] = useState<'dashboard' | 'customers' | 'reports' | 'transactions' | 'superuser' | 'analytics' | 'finance'>('dashboard');
   const [clients, setClients] = useState<Client[]>([]);
   const [allOrders, setAllOrders] = useState<any[]>([]);
   const [allPrinterDocs, setAllPrinterDocs] = useState<any[]>([]);
   const [allReportDocs, setAllReportDocs] = useState<any[]>([]);
+  // Finance Team state
+  const [financeMembers, setFinanceMembers] = useState<FinanceMember[]>([]);
+  const [financePayouts, setFinancePayouts] = useState<FinancePayout[]>([]);
+  const [walletBalances, setWalletBalances] = useState<VendorWalletInfo[]>([]);
+  const [merchantWalletBalance, setMerchantWalletBalance] = useState<number>(0);
+  const [walletTransactions, setWalletTransactions] = useState<WalletTransaction[]>([]);
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
   const [showDetailsPanel, setShowDetailsPanel] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -465,6 +494,14 @@ const App: React.FC = () => {
   const [isSavingSuperuser, setIsSavingSuperuser] = useState(false);
   const [superuserSuccessMsg, setSuperuserSuccessMsg] = useState('');
   const [copiedSuperuserKey, setCopiedSuperuserKey] = useState<'user' | 'pass' | null>(null);
+
+  // Finance Team Management State
+  const [financeFormName, setFinanceFormName] = useState('');
+  const [financeFormUsername, setFinanceFormUsername] = useState('');
+  const [financeFormPassword, setFinanceFormPassword] = useState('');
+  const [showFinancePass, setShowFinancePass] = useState(false);
+  const [isSavingFinanceMember, setIsSavingFinanceMember] = useState(false);
+  const [financeSuccessMsg, setFinanceSuccessMsg] = useState('');
 
   // New Client Form State
   const [newShopName, setNewShopName] = useState('');
@@ -1080,6 +1117,81 @@ const App: React.FC = () => {
     return () => unsubscribe();
   }, []);
 
+  // Fetch Finance Team members
+  useEffect(() => {
+    const unsub = onSnapshot(query(collection(db, 'finance_team')), snap => {
+      const data: FinanceMember[] = [];
+      snap.forEach(d => data.push({ id: d.id, ...d.data() } as FinanceMember));
+      setFinanceMembers(data);
+    }, err => console.warn('finance_team fetch error:', err));
+    return () => unsub();
+  }, []);
+
+  // Fetch Finance Payouts
+  useEffect(() => {
+    const unsub = onSnapshot(query(collection(db, 'finance_payouts')), snap => {
+      const data: FinancePayout[] = [];
+      snap.forEach(d => data.push({ id: d.id, ...d.data() } as FinancePayout));
+      setFinancePayouts(data);
+    }, err => console.warn('finance_payouts fetch error:', err));
+    return () => unsub();
+  }, []);
+
+  // Watch wallet balances for all known vendors (re-runs when clients list changes)
+  useEffect(() => {
+    if (clients.length === 0) return;
+    const unsubs: (() => void)[] = [];
+    const balanceMap = new Map<string, VendorWalletInfo>();
+    clients.forEach(client => {
+      const slug = client.slug || client.id;
+      const unsub = onSnapshot(
+        doc(db, 'vendors', slug, 'wallet', 'balance'),
+        snap => {
+          const balance = snap.exists() ? (snap.data()?.balance || 0) : 0;
+          const lastUpdated = snap.exists() ? snap.data()?.lastUpdated : undefined;
+          balanceMap.set(slug, { vendorSlug: slug, vendorName: client.shopName, balance, lastUpdated });
+          setWalletBalances(Array.from(balanceMap.values()));
+        },
+        () => {} // silently ignore missing wallet docs
+      );
+      unsubs.push(unsub);
+    });
+    return () => unsubs.forEach(u => u());
+  }, [clients]);
+
+  // Watch merchant's own wallet when logged in as merchant
+  useEffect(() => {
+    if (!loggedInMerchant) return;
+    const slug = loggedInMerchant.slug || loggedInMerchant.id;
+    const unsub = onSnapshot(
+      doc(db, 'vendors', slug, 'wallet', 'balance'),
+      snap => setMerchantWalletBalance(snap.exists() ? (snap.data()?.balance || 0) : 0),
+      () => setMerchantWalletBalance(0)
+    );
+    return () => unsub();
+  }, [loggedInMerchant]);
+
+  // Watch wallet transactions for currently viewed vendor (merchant or selected client in admin)
+  useEffect(() => {
+    const target = loggedInMerchant || (userRole === 'admin' ? selectedClient : null);
+    if (!target) {
+      setWalletTransactions([]);
+      return;
+    }
+    const slug = target.slug || target.id;
+    const unsub = onSnapshot(
+      collection(db, 'vendors', slug, 'wallet_transactions'),
+      snap => {
+        const txs: WalletTransaction[] = [];
+        snap.forEach(d => txs.push({ id: d.id, ...d.data() } as WalletTransaction));
+        txs.sort((a, b) => new Date(b.createdAt || b.date || 0).getTime() - new Date(a.createdAt || a.date || 0).getTime());
+        setWalletTransactions(txs);
+      },
+      err => console.warn('wallet_transactions fetch error:', err)
+    );
+    return () => unsub();
+  }, [loggedInMerchant, selectedClient, userRole]);
+
   const handleSaveSuperuser = async (e: React.FormEvent) => {
     e.preventDefault();
     const cleanUser = editSuperuserUsername.trim().toLowerCase();
@@ -1117,6 +1229,47 @@ const App: React.FC = () => {
       alert('Failed to save superuser credentials: ' + (err.message || err));
     } finally {
       setIsSavingSuperuser(false);
+    }
+  };
+
+  const handleSaveFinanceMember = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanUser = financeFormUsername.trim().toLowerCase();
+    const cleanPass = financeFormPassword.trim();
+    const cleanName = financeFormName.trim() || 'Finance Member';
+    if (!cleanUser || !cleanPass) {
+      alert('Please enter both a User ID and Password for the Finance member');
+      return;
+    }
+    setIsSavingFinanceMember(true);
+    try {
+      await setDoc(doc(db, 'finance_team', cleanUser), {
+        id: cleanUser,
+        name: cleanName,
+        username: cleanUser,
+        password: cleanPass,
+        createdAt: new Date().toISOString(),
+      }, { merge: true });
+      setFinanceFormName('');
+      setFinanceFormUsername('');
+      setFinanceFormPassword('');
+      setFinanceSuccessMsg(`Finance member "${cleanName}" saved successfully!`);
+      setTimeout(() => setFinanceSuccessMsg(''), 4000);
+    } catch (err: any) {
+      console.error('Error saving finance team member:', err);
+      alert('Failed to save finance member: ' + (err.message || err));
+    } finally {
+      setIsSavingFinanceMember(false);
+    }
+  };
+
+  const handleDeleteFinanceMember = async (memberId: string) => {
+    if (!window.confirm(`Are you sure you want to remove finance member "${memberId}"?`)) return;
+    try {
+      await deleteDoc(doc(db, 'finance_team', memberId));
+    } catch (err: any) {
+      console.error('Error deleting finance member:', err);
+      alert('Failed to delete finance member: ' + (err.message || err));
     }
   };
 
@@ -1975,17 +2128,94 @@ const App: React.FC = () => {
 
 
 
+  // ── Compute pending payouts (today's PAID orders not yet paid out manually) ─
+  const pendingPayouts: PendingPayout[] = useMemo(() => {
+    const todayIST = new Date(Date.now() + 5.5 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    // group by vendor slug
+    const map = new Map<string, PendingPayout>();
+    allOrders.forEach(o => {
+      if (o.payment_status !== 'PAID') return;
+      if (o.walletCredited === true) return;
+      // determine order date in IST
+      const rawDate = o.paid_at || o.createdAt || '';
+      if (!rawDate) return;
+      const orderDateIST = new Date(new Date(rawDate).getTime() + 5.5 * 60 * 60 * 1000).toISOString().slice(0, 10);
+      if (orderDateIST !== todayIST) return;
+
+      const slug = o.vendorSlug || o.shopSlug || '';
+      if (!slug) return;
+
+      // check if already manually processed today
+      const alreadyProcessed = financePayouts.some(
+        fp => fp.vendorSlug === slug && fp.date === todayIST && (fp.status === 'processed' || fp.status === 'auto_credited')
+      );
+      if (alreadyProcessed) return;
+
+      const amount = typeof o.vendorAmount === 'number' ? o.vendorAmount
+        : typeof o.subtotal === 'number' ? o.subtotal : Number(o.amount || 0);
+
+      const existing = map.get(slug) || {
+        vendorSlug: slug,
+        vendorName: o.storeName || o.shopName || slug,
+        date: todayIST,
+        amount: 0,
+        orderCodes: [],
+        orderCount: 0,
+      };
+      existing.amount += amount;
+      existing.orderCodes.push(o.orderCode || o.id || '');
+      existing.orderCount += 1;
+      map.set(slug, existing);
+    });
+    return Array.from(map.values());
+  }, [allOrders, financePayouts]);
+
+  // ── Handle Finance: Mark as Paid ─────────────────────────────────────────────
+  const handleMarkPaid = async (payout: PendingPayout, referenceId: string) => {
+    const now = new Date().toISOString();
+    // 1. Write finance_payouts record (manual, no wallet credit)
+    await addDoc(collection(db, 'finance_payouts'), {
+      vendorSlug: payout.vendorSlug,
+      vendorName: payout.vendorName,
+      amount: payout.amount,
+      date: payout.date,
+      status: 'processed',
+      processedBy: loggedInFinanceUser?.id || 'finance',
+      referenceId: referenceId || null,
+      orderCodes: payout.orderCodes,
+      createdAt: now,
+      processedAt: now,
+    });
+    // 2. Write wallet transaction (optional: use 'manual_payout' type to indicate bank transfer)
+    await addDoc(collection(db, 'vendors', payout.vendorSlug, 'wallet_transactions'), {
+      type: 'manual_payout',
+      amount: payout.amount,
+      date: payout.date,
+      description: `Manual payout by finance team (${referenceId || 'no ref'})`,
+      processedBy: loggedInFinanceUser?.id || 'finance',
+      referenceId: referenceId || null,
+      ordersIncluded: payout.orderCodes,
+      createdAt: now,
+    });
+  };
+
   if (!isAuthenticated) {
     return (
       <LoginPage
         clients={clients}
-        onLogin={(role, merchant) => {
-          setUserRole(role);
+        onLogin={(role, merchant, financeMember) => {
+          setUserRole(role as any);
           if (role === 'merchant' && merchant) {
             setLoggedInMerchant(merchant);
             setSelectedClient(merchant);
+            setLoggedInFinanceUser(null);
+          } else if (role === 'finance' && financeMember) {
+            setLoggedInFinanceUser(financeMember);
+            setLoggedInMerchant(null);
+            setActiveView('finance');
           } else {
             setLoggedInMerchant(null);
+            setLoggedInFinanceUser(null);
           }
           setIsAuthenticated(true);
         }}
@@ -3307,8 +3537,8 @@ const App: React.FC = () => {
           }}
           onSignOut={handleSignOut}
           userRole={userRole}
-          merchantName={selectedClient?.shopName || 'Shop'}
-          merchantUsername={selectedClient?.merchantCredentials?.username || selectedClient?.slug}
+          merchantName={userRole === 'finance' ? (loggedInFinanceUser?.name || 'Finance Team') : (selectedClient?.shopName || 'Shop')}
+          merchantUsername={userRole === 'finance' ? (loggedInFinanceUser?.username || 'finance') : (selectedClient?.merchantCredentials?.username || selectedClient?.slug)}
         />
       </div>
 
@@ -3323,7 +3553,7 @@ const App: React.FC = () => {
             </button>
           </div>
 
-          {activeView !== 'analytics' && (
+          {activeView !== 'analytics' && activeView !== 'finance' && (
             <header className="flex flex-col md:flex-row md:items-end justify-between mb-10 gap-6">
               <div className="max-w-xl">
                 {selectedClient && userRole === 'admin' && (
@@ -3416,7 +3646,7 @@ const App: React.FC = () => {
           )}
 
           {/* Merged printer/report counts for the selected client */}
-          {activeView !== 'analytics' && (() => {
+          {activeView !== 'analytics' && activeView !== 'finance' && (() => {
             const clientPrintersFromCollection = selectedClient
               ? allPrinterDocs.filter(p => p.clientId === selectedClient.id || p.shopName === selectedClient.shopName)
               : [];
@@ -3431,9 +3661,12 @@ const App: React.FC = () => {
             const extraReports = clientReportsFromCollection.filter(r => !nestedReportIds.has(r.id));
             const mergedReports = [...(selectedClient?.reports || []), ...extraReports];
             const pendingMergedReports = mergedReports.filter(r => r.status === 'pending');
+            const displayWalletBalance = userRole === 'merchant'
+              ? merchantWalletBalance
+              : (walletBalances.find(w => w.vendorSlug === (selectedClient?.slug || selectedClient?.id))?.balance || 0);
 
             return (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-10">
+              <div className={`grid grid-cols-1 sm:grid-cols-2 ${selectedClient && userRole === 'merchant' ? 'lg:grid-cols-5' : 'lg:grid-cols-4'} gap-4 mb-10`}>
                 {selectedClient ? (
                   userRole === 'admin' ? (
                     <>
@@ -3479,6 +3712,15 @@ const App: React.FC = () => {
                         icon={<Receipt size={18} />}
                         iconBg="bg-emerald-50"
                         iconColor="text-emerald-600"
+                      />
+                      <StatCard
+                        label="Wallet Balance"
+                        value={`₹${displayWalletBalance.toFixed(2)}`}
+                        subValue="Auto-transferred after 7 PM"
+                        icon={<Wallet size={18} />}
+                        iconBg="bg-indigo-50"
+                        iconColor="text-indigo-600"
+                        highlight={displayWalletBalance > 0}
                       />
                       <StatCard
                         label="Total Pages Printed"
@@ -3617,6 +3859,9 @@ const App: React.FC = () => {
 
             // Filter real-time Firestore orders specifically for this shop (matching vendorSlug or subcollection docPath)
             const slug = selectedClient.slug || selectedClient.id;
+            const clientWalletBalance = userRole === 'merchant'
+              ? merchantWalletBalance
+              : (walletBalances.find(w => w.vendorSlug === slug)?.balance || 0);
             const shopRawOrders = allOrders.filter(order => {
               const isShopMatch =
                 order.vendorSlug === slug ||
@@ -4094,6 +4339,114 @@ const App: React.FC = () => {
                   </div>
 
                 )}
+
+                {/* 5. Wallet & Settlement History */}
+                <div>
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
+                    <div>
+                      <div className="flex items-center gap-2 mb-1">
+                        <Wallet className="text-indigo-600" size={24} />
+                        <h3 className="text-2xl font-display font-bold text-slate-900">Wallet & Settlement History</h3>
+                        <span className="bg-indigo-50 text-indigo-700 font-bold text-xs px-2.5 py-0.5 rounded-full border border-indigo-200">
+                          Live Wallet
+                        </span>
+                      </div>
+                      <p className="text-slate-500 text-xs">
+                        Daily earnings from customer orders are credited here automatically at 7:00 PM IST or paid out manually by the Finance Team.
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-3 bg-indigo-50/70 border border-indigo-100 rounded-2xl px-5 py-3">
+                      <div className="w-10 h-10 rounded-xl bg-indigo-600 text-white flex items-center justify-center font-bold">
+                        <Wallet size={20} />
+                      </div>
+                      <div>
+                        <span className="text-[10px] uppercase font-bold text-indigo-500 block">Current Wallet Balance</span>
+                        <span className="text-xl font-bold font-display text-indigo-950">
+                          ₹{clientWalletBalance.toFixed(2)}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="bg-white border border-slate-200 rounded-3xl overflow-hidden shadow-sm">
+                    {walletTransactions.length === 0 ? (
+                      <div className="p-10 text-center text-slate-400">
+                        <Wallet size={36} className="mx-auto mb-2 text-slate-300" />
+                        <p className="font-semibold text-sm text-slate-600">No wallet settlements yet</p>
+                        <p className="text-xs mt-1 max-w-md mx-auto">
+                          Daily earnings from paid customer orders will appear here if settled by the Finance Team or auto-credited daily at 7:00 PM IST.
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left whitespace-nowrap">
+                          <thead className="bg-slate-50 border-b border-slate-200">
+                            <tr>
+                              <th className="px-6 py-4 text-xs font-bold uppercase tracking-widest text-slate-400">Date (IST)</th>
+                              <th className="px-6 py-4 text-xs font-bold uppercase tracking-widest text-slate-400">Settlement Type</th>
+                              <th className="px-6 py-4 text-xs font-bold uppercase tracking-widest text-slate-400">Description / Reference</th>
+                              <th className="px-6 py-4 text-xs font-bold uppercase tracking-widest text-slate-400">Orders</th>
+                              <th className="px-6 py-4 text-xs font-bold uppercase tracking-widest text-slate-400 text-right">Amount</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100">
+                            {walletTransactions.map((tx) => {
+                              const isAuto = tx.type === 'auto_credit';
+                              const isManualPayout = tx.type === 'manual_payout';
+                              return (
+                                <tr key={tx.id} className="hover:bg-slate-50/50 transition-colors">
+                                  <td className="px-6 py-4">
+                                    <div className="flex flex-col">
+                                      <span className="font-semibold text-slate-900 text-sm">{tx.date}</span>
+                                      <span className="text-[11px] text-slate-400">
+                                        {tx.createdAt ? new Date(tx.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
+                                      </span>
+                                    </div>
+                                  </td>
+                                  <td className="px-6 py-4">
+                                    <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold border ${
+                                      isAuto
+                                        ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                                        : isManualPayout
+                                          ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                          : 'bg-slate-100 text-slate-700 border-slate-200'
+                                    }`}>
+                                      {isAuto && <Zap size={12} />}
+                                      {isManualPayout && <CheckCircle2 size={12} />}
+                                      {isAuto ? 'Auto-Credit (7 PM)' : isManualPayout ? 'Direct Bank Payout' : 'Manual Credit'}
+                                    </span>
+                                  </td>
+                                  <td className="px-6 py-4">
+                                    <div className="flex flex-col">
+                                      <span className="text-sm font-medium text-slate-800">{tx.description || 'Wallet settlement'}</span>
+                                      {tx.referenceId && (
+                                        <span className="text-xs font-mono text-slate-400">Ref: {tx.referenceId}</span>
+                                      )}
+                                    </div>
+                                  </td>
+                                  <td className="px-6 py-4">
+                                    <span className="text-xs text-slate-600 bg-slate-100 px-2 py-0.5 rounded-md font-medium">
+                                      {tx.ordersIncluded?.length ? `${tx.ordersIncluded.length} orders` : '—'}
+                                    </span>
+                                  </td>
+                                  <td className="px-6 py-4 text-right">
+                                    <span className={`text-base font-bold font-display ${isAuto ? 'text-indigo-600' : 'text-emerald-600'}`}>
+                                      {isAuto ? '+' : ''}₹{Number(tx.amount || 0).toFixed(2)}
+                                    </span>
+                                    {isManualPayout && (
+                                      <span className="block text-[10px] text-slate-400 uppercase font-semibold">To Bank</span>
+                                    )}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
             );
           })()}
@@ -4106,6 +4459,25 @@ const App: React.FC = () => {
               userRole={userRole}
               onSelectClient={(c) => setSelectedClient(c)}
             />
+          )}
+
+          {activeView === 'finance' && (
+            <div className="space-y-2">
+              <div className="mb-6">
+                <h2 className="text-2xl font-display font-bold text-slate-900">Finance Dashboard</h2>
+                <p className="text-slate-500 text-sm mt-1">
+                  Manage vendor payouts · Auto-credit runs at 7:00 PM IST daily
+                  {loggedInFinanceUser && <span className="ml-2 font-semibold text-slate-700">· {loggedInFinanceUser.name || loggedInFinanceUser.username}</span>}
+                </p>
+              </div>
+              <FinancePage
+                pendingPayouts={pendingPayouts}
+                financePayouts={financePayouts}
+                walletBalances={walletBalances}
+                currentFinanceUser={loggedInFinanceUser?.id || ''}
+                onMarkPaid={handleMarkPaid}
+              />
+            </div>
           )}
 
           {activeView === 'reports' && (
@@ -4572,6 +4944,169 @@ const App: React.FC = () => {
                         </button>
                       </div>
                     </form>
+                  </div>
+                </div>
+
+                {/* Finance Team Accounts Section */}
+                <div className="pt-8 border-t border-slate-200">
+                  <div className="bg-gradient-to-r from-indigo-950 to-indigo-900 rounded-3xl p-6 lg:p-8 text-white shadow-xl shadow-indigo-950/10 flex flex-col md:flex-row items-start md:items-center justify-between gap-6 mb-8">
+                    <div className="flex items-start gap-4">
+                      <div className="w-12 h-12 rounded-2xl bg-white/10 flex items-center justify-center text-white shrink-0 border border-white/10">
+                        <Wallet size={24} />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <h3 className="text-xl font-display font-bold">Finance Team Accounts</h3>
+                          <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase bg-indigo-400/20 text-indigo-300 border border-indigo-400/30">
+                            Firestore: finance_team
+                          </span>
+                        </div>
+                        <p className="text-indigo-200 text-xs mt-1 max-w-xl">
+                          Finance team members can sign in with their credentials to access the Finance Portal, execute manual vendor payouts, and oversee wallet balances.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 bg-white/10 px-4 py-2 rounded-2xl border border-white/10 text-xs font-medium">
+                      <div className="w-2 h-2 rounded-full bg-indigo-400 animate-pulse" />
+                      <span>Finance Members: <strong className="text-white font-mono">{financeMembers.length}</strong></span>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                    {/* Left Column: Registered Finance Members */}
+                    <div className="space-y-4">
+                      <div>
+                        <h4 className="text-base font-display font-bold text-slate-900 mb-1">Registered Finance Personnel</h4>
+                        <p className="text-slate-500 text-xs">Accounts that can sign into the Admin Console with Finance role.</p>
+                      </div>
+
+                      {financeMembers.length === 0 ? (
+                        <div className="bg-white border border-dashed border-slate-200 rounded-3xl p-8 text-center text-slate-400">
+                          <Wallet size={36} className="mx-auto mb-2 text-slate-300" />
+                          <p className="font-semibold text-sm text-slate-600">No finance members registered</p>
+                          <p className="text-xs mt-1">Add your first finance team member using the form.</p>
+                        </div>
+                      ) : (
+                        financeMembers.map((member) => (
+                          <div key={member.id} className="bg-white border border-slate-200 rounded-3xl p-5 shadow-sm hover:shadow-md transition-shadow">
+                            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                              <div className="flex items-center gap-3">
+                                <div className="w-9 h-9 rounded-xl bg-indigo-100 text-indigo-700 flex items-center justify-center font-bold text-xs">
+                                  {member.name ? member.name.slice(0, 2).toUpperCase() : 'FT'}
+                                </div>
+                                <div>
+                                  <h5 className="font-bold text-slate-900 text-sm">{member.name}</h5>
+                                  <span className="text-[11px] text-slate-400 font-mono">User ID: {member.username || member.id}</span>
+                                </div>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteFinanceMember(member.id)}
+                                className="text-rose-500 hover:text-rose-700 p-1.5 rounded-lg hover:bg-rose-50 transition-colors text-xs font-semibold flex items-center gap-1"
+                                title="Remove member"
+                              >
+                                <Trash2 size={14} /> Remove
+                              </button>
+                            </div>
+                            <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                              <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-100">
+                                <span className="text-slate-400 block text-[10px] uppercase font-bold">Username</span>
+                                <span className="font-mono font-bold text-slate-900 truncate block">{member.username || member.id}</span>
+                              </div>
+                              <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-100">
+                                <span className="text-slate-400 block text-[10px] uppercase font-bold">Password</span>
+                                <span className="font-mono text-slate-600 truncate block">••••••••</span>
+                              </div>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+
+                    {/* Right Column: Add / Create Finance Member Form */}
+                    <div className="bg-white border border-slate-200 rounded-3xl p-6 lg:p-8 shadow-sm h-fit">
+                      <div className="flex items-center gap-3 mb-6">
+                        <div className="w-10 h-10 rounded-xl bg-indigo-600 text-white flex items-center justify-center font-bold">
+                          <UserCheck size={18} />
+                        </div>
+                        <div>
+                          <h4 className="text-lg font-display font-bold text-slate-900">Add Finance Member</h4>
+                          <p className="text-slate-500 text-xs">Create credentials for a finance team member.</p>
+                        </div>
+                      </div>
+
+                      {financeSuccessMsg && (
+                        <div className="mb-6 p-4 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-800 flex items-center gap-2.5 text-xs font-bold animate-in fade-in duration-300">
+                          <CheckCircle2 size={16} className="text-emerald-600 shrink-0" />
+                          <span>{financeSuccessMsg}</span>
+                        </div>
+                      )}
+
+                      <form onSubmit={handleSaveFinanceMember} className="space-y-4">
+                        <div>
+                          <label className="block text-xs font-bold text-slate-400 uppercase mb-1.5">
+                            Full Name
+                          </label>
+                          <input
+                            type="text"
+                            required
+                            className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-600 transition-all"
+                            placeholder="e.g. Ramesh Kumar"
+                            value={financeFormName}
+                            onChange={(e) => setFinanceFormName(e.target.value)}
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-bold text-slate-400 uppercase mb-1.5">
+                            Finance User ID (Login Username)
+                          </label>
+                          <input
+                            type="text"
+                            required
+                            className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold font-mono outline-none focus:ring-2 focus:ring-indigo-600 transition-all"
+                            placeholder="e.g. finance.ramesh"
+                            value={financeFormUsername}
+                            onChange={(e) => setFinanceFormUsername(e.target.value)}
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-bold text-slate-400 uppercase mb-1.5">
+                            Password
+                          </label>
+                          <div className="relative">
+                            <input
+                              type={showFinancePass ? "text" : "password"}
+                              required
+                              className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold font-mono outline-none focus:ring-2 focus:ring-indigo-600 transition-all pr-10"
+                              placeholder="Enter password"
+                              value={financeFormPassword}
+                              onChange={(e) => setFinanceFormPassword(e.target.value)}
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setShowFinancePass(!showFinancePass)}
+                              className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-black"
+                            >
+                              {showFinancePass ? <EyeOff size={16} /> : <Eye size={16} />}
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="pt-3">
+                          <button
+                            type="submit"
+                            disabled={isSavingFinanceMember}
+                            className="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-3.5 rounded-xl font-bold transition-all shadow-lg shadow-indigo-600/20 flex items-center justify-center gap-2 active:scale-95 disabled:opacity-50"
+                          >
+                            <UserCheck size={16} />
+                            {isSavingFinanceMember ? 'Saving to Firebase...' : 'Create Finance Account'}
+                          </button>
+                        </div>
+                      </form>
+                    </div>
                   </div>
                 </div>
               </div>

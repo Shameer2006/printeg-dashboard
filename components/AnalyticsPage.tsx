@@ -21,13 +21,13 @@ import {
   TrendingUp,
   Store,
 } from 'lucide-react';
-import { Client } from '../types';
+import { Client, UserRole } from '../types';
 
 export interface AnalyticsPageProps {
   allOrders: any[];
   clients: Client[];
   selectedClient: Client | null;
-  userRole: 'admin' | 'merchant';
+  userRole: UserRole;
   onSelectClient?: (client: Client | null) => void;
 }
 

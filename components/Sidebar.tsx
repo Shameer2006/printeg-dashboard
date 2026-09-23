@@ -1,4 +1,3 @@
-
 import React from 'react';
 import { createPortal } from 'react-dom';
 import {
@@ -8,7 +7,8 @@ import {
   LogOut,
   Receipt,
   LayoutGrid,
-  ShieldCheck
+  ShieldCheck,
+  Wallet
 } from 'lucide-react';
 
 interface SidebarItemProps {
@@ -32,10 +32,10 @@ const SidebarItem: React.FC<SidebarItemProps> = ({ icon, label, active, onClick 
 );
 
 interface SidebarProps {
-  activeView: 'dashboard' | 'customers' | 'reports' | 'transactions' | 'superuser' | 'analytics';
-  setActiveView: (view: 'dashboard' | 'customers' | 'reports' | 'transactions' | 'superuser' | 'analytics') => void;
+  activeView: 'dashboard' | 'customers' | 'reports' | 'transactions' | 'superuser' | 'analytics' | 'finance';
+  setActiveView: (view: 'dashboard' | 'customers' | 'reports' | 'transactions' | 'superuser' | 'analytics' | 'finance') => void;
   onSignOut?: () => void;
-  userRole?: 'admin' | 'merchant';
+  userRole?: 'admin' | 'merchant' | 'finance';
   merchantName?: string;
   merchantUsername?: string;
 }
@@ -66,23 +66,24 @@ export const Sidebar: React.FC<SidebarProps> = ({
   };
 
   const isMerchant = userRole === 'merchant';
+  const isFinance = userRole === 'finance';
 
   return (
     <>
       <aside className="w-64 border-r border-slate-200 bg-white flex flex-col h-screen sticky top-0">
         <div className="p-6">
           <div className="flex flex-col items-center text-center mb-8">
-            <div className="w-12 h-12 bg-black flex items-center justify-center rounded-xl shadow-lg mb-3">
+            <div className={`w-12 h-12 flex items-center justify-center rounded-xl shadow-lg mb-3 ${isFinance ? 'bg-indigo-600' : 'bg-black'}`}>
               <span className="text-white font-display font-bold text-2xl">
-                {isMerchant && merchantName ? merchantName.charAt(0).toUpperCase() : 'P'}
+                {isMerchant && merchantName ? merchantName.charAt(0).toUpperCase() : (isFinance ? 'F' : 'P')}
               </span>
             </div>
             <div>
               <h1 className="font-display font-bold text-xl leading-tight text-slate-900 truncate max-w-[200px]">
-                {isMerchant && merchantName ? merchantName : 'PrintEG'}
+                {isMerchant && merchantName ? merchantName : (isFinance ? 'PrintEG Finance' : 'PrintEG')}
               </h1>
               <p className="text-[12px] text-slate-600 font-medium mt-1">
-                {isMerchant ? 'Merchant Portal' : 'Print. Easy. Go'}
+                {isMerchant ? 'Merchant Portal' : (isFinance ? 'Finance & Payouts' : 'Print. Easy. Go')}
               </p>
             </div>
           </div>
@@ -103,6 +104,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   onClick={() => setActiveView('analytics')}
                 />
               </>
+            ) : isFinance ? (
+              <>
+                <SidebarItem
+                  icon={<Wallet size={20} />}
+                  label="Finance & Payouts"
+                  active={activeView === 'finance'}
+                  onClick={() => setActiveView('finance')}
+                />
+              </>
             ) : (
               <>
                 <SidebarItem
@@ -116,6 +126,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   label="Store Analytics & Stacks"
                   active={activeView === 'analytics'}
                   onClick={() => setActiveView('analytics')}
+                />
+                <SidebarItem
+                  icon={<Wallet size={20} />}
+                  label="Finance & Payouts"
+                  active={activeView === 'finance'}
+                  onClick={() => setActiveView('finance')}
                 />
                 <SidebarItem
                   icon={<Users size={20} />}
@@ -142,15 +158,19 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
         <div className="mt-auto p-6 border-t border-slate-100">
           <div className="flex items-center gap-3 mb-6 p-2">
-            <div className="w-9 h-9 rounded-full bg-slate-200 flex items-center justify-center text-xs font-bold text-slate-700">
-              {isMerchant && merchantName ? merchantName.slice(0, 2).toUpperCase() : 'PE'}
+            <div className={`w-9 h-9 rounded-full flex items-center justify-center text-xs font-bold ${isFinance ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-200 text-slate-700'}`}>
+              {isMerchant && merchantName ? merchantName.slice(0, 2).toUpperCase() : (isFinance ? 'FT' : 'PE')}
             </div>
             <div className="overflow-hidden">
               <p className="text-sm font-semibold text-slate-900 truncate">
-                {isMerchant ? (merchantUsername ? `@${merchantUsername}` : merchantName) : 'PrintEG Master'}
+                {isMerchant
+                  ? (merchantUsername ? `@${merchantUsername}` : merchantName)
+                  : isFinance
+                    ? (merchantName || 'Finance Member')
+                    : 'PrintEG Master'}
               </p>
               <p className="text-[11px] text-slate-500 truncate">
-                {isMerchant ? 'Shop Owner' : 'Admin Access'}
+                {isMerchant ? 'Shop Owner' : isFinance ? 'Finance Team' : 'Admin Access'}
               </p>
             </div>
           </div>

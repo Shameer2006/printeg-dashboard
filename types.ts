@@ -2,6 +2,7 @@ import React from 'react';
 
 export type PlanType = 'Annual' | 'Monthly' | 'Starter';
 export type StatusType = 'active' | 'expired';
+export type UserRole = 'admin' | 'merchant' | 'finance';
 
 export interface JobHistory {
   id: string;
@@ -120,7 +121,7 @@ export interface Client {
   status: StatusType;
   isActive?: boolean;
   themeColor?: string;
-  lastActive: string;
+  lastActive?: string;
   iconType: 'storefront' | 'school' | 'print' | 'hub';
   history?: JobHistory[];
   reports?: ClientReport[];
@@ -133,6 +134,7 @@ export interface Client {
   printingPrices?: PrintPrices;
   shopInfo?: string;
   customWebsiteName?: string;
+  expiryDate?: string;
 }
 
 export interface StatItem {
@@ -142,4 +144,40 @@ export interface StatItem {
   icon: React.ReactNode;
   color: string;
   trend?: 'up' | 'down';
+}
+
+// ─── Finance Team Types ───────────────────────────────────────────────────────
+
+export interface FinanceMember {
+  id: string;
+  name: string;
+  username: string;
+  password: string;
+  createdAt?: string;
+}
+
+export interface WalletTransaction {
+  id: string;
+  type: 'auto_credit' | 'manual_payout' | 'manual_credit';
+  amount: number;
+  date: string;            // YYYY-MM-DD IST
+  description: string;
+  processedBy?: string;    // finance member id
+  referenceId?: string;    // UPI / bank ref for manual payouts
+  ordersIncluded?: string[];
+  createdAt: string;
+}
+
+export interface FinancePayout {
+  id: string;
+  vendorSlug: string;
+  vendorName: string;
+  amount: number;
+  date: string;            // YYYY-MM-DD IST
+  status: 'pending' | 'processed' | 'auto_credited';
+  processedBy?: string;
+  referenceId?: string;
+  createdAt: string;
+  processedAt?: string;
+  orderCodes: string[];
 }
